@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_HTTP_TRANSPORT_HPP
-#define MCPP_TRANSPORT_HTTP_TRANSPORT_HPP
+#pragma once
 
 #include "mcpp/transport/backoff_policy.hpp"
 #include "mcpp/transport/http_client.hpp"
@@ -187,4 +186,3 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_HTTP_TRANSPORT_HPP

@@ -22,6 +22,9 @@ namespace mcpp::async {
 
 namespace {
 
+// Named constants for magic numbers
+constexpr useconds_t kProcessTerminationWaitUs = 100'000;  // 100ms wait before SIGKILL
+
 TransportError make_error(TransportError::Category cat, const std::string& msg) {
     return TransportError{cat, msg, std::nullopt};
 }
@@ -59,6 +62,28 @@ asio::any_io_executor AsyncProcessTransport::get_executor() {
     return executor_;
 }
 
+// Platform-specific allowed command prefixes
+#if defined(__APPLE__)
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/", "/opt/homebrew/bin/",
+    "/usr/sbin/", "/sbin/", "/Applications/"
+};
+#elif defined(__linux__)
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/", "/usr/sbin/", "/sbin/",
+    "/snap/bin/", "/var/lib/flatpak/", "/home/", "~/.local/bin/"
+};
+#elif defined(_WIN32)
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "C:\\Windows\\System32\\", "C:\\Windows\\", "C:\\Program Files\\",
+    "C:\\Program Files (x86)\\", "C:\\Users\\"
+};
+#else
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/"
+};
+#endif
+
 // Helper to validate command for security
 static bool is_safe_command(const std::string& command, const std::vector<std::string>& args) {
     // Reject empty commands
@@ -84,13 +109,15 @@ static bool is_safe_command(const std::string& command, const std::vector<std::s
     }
     
     // Reject absolute paths outside of expected locations (defense in depth)
-    if (command[0] == '/') {
-        const std::vector<std::string> allowed_prefixes = {
-            "/usr/bin/", "/usr/local/bin/", "/bin/", "/opt/homebrew/bin/",
-            "/usr/sbin/", "/sbin/"
-        };
+#if defined(_WIN32)
+    const bool is_absolute = (command.size() >= 2 && command[1] == ':');
+#else
+    const bool is_absolute = (!command.empty() && command[0] == '/');
+#endif
+    
+    if (is_absolute) {
         bool allowed = false;
-        for (const auto& prefix : allowed_prefixes) {
+        for (const auto& prefix : kAllowedCommandPrefixes) {
             if (command.rfind(prefix, 0) == 0) {
                 allowed = true;
                 break;
@@ -638,7 +665,7 @@ void AsyncProcessTransport::terminate_process() {
 
     if (result == 0) {
         // Still running, wait a bit more
-        usleep(100000);  // 100ms
+        usleep(kProcessTerminationWaitUs);
         result = waitpid(child_pid_, &status, WNOHANG);
 
         if (result == 0) {

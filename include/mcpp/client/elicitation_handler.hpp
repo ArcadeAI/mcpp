@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_ELICITATION_HANDLER_HPP
-#define MCPP_CLIENT_ELICITATION_HANDLER_HPP
+#pragma once
 
 #include "mcpp/protocol/mcp_types.hpp"
 
@@ -119,5 +118,4 @@ public:
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_ELICITATION_HANDLER_HPP
 

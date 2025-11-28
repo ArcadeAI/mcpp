@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_PROCESS_TRANSPORT_HPP
-#define MCPP_TRANSPORT_PROCESS_TRANSPORT_HPP
+#pragma once
 
 // Platform check - ProcessTransport requires POSIX APIs
 #if !defined(__unix__) && !defined(__APPLE__) && !defined(__linux__)
@@ -119,5 +118,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_PROCESS_TRANSPORT_HPP
 

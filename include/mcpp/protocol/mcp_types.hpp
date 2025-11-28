@@ -1,5 +1,4 @@
-#ifndef MCPP_PROTOCOL_MCP_TYPES_HPP
-#define MCPP_PROTOCOL_MCP_TYPES_HPP
+#pragma once
 
 #include <nlohmann/json.hpp>
 
@@ -1676,5 +1675,4 @@ struct ProgressNotification {
 
 }  // namespace mcpp
 
-#endif  // MCPP_PROTOCOL_MCP_TYPES_HPP
 

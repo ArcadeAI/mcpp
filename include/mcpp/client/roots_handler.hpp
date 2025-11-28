@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_ROOTS_HANDLER_HPP
-#define MCPP_CLIENT_ROOTS_HANDLER_HPP
+#pragma once
 
 #include "mcpp/protocol/mcp_types.hpp"
 
@@ -123,5 +122,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_ROOTS_HANDLER_HPP
 

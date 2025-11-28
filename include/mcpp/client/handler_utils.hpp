@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_HANDLER_UTILS_HPP
-#define MCPP_CLIENT_HANDLER_UTILS_HPP
+#pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Handler Utilities
@@ -111,5 +110,4 @@ struct ElicitationUrlValidation {
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_HANDLER_UTILS_HPP
 

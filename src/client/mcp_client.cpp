@@ -732,11 +732,19 @@ void McpClient::dispatch_notification(const Json& message) {
     Json params = message.value("params", Json::object());
     
     // Call generic handler first
-    if (notification_handler_) {
-        notification_handler_(method, params);
+    // Safely invoke notification handler with exception protection
+    try {
+        if (notification_handler_) {
+            notification_handler_(method, params);
+        }
+    } catch (const std::exception& e) {
+        MCPP_LOG_ERROR("Exception in generic notification handler: " + std::string(e.what()));
+    } catch (...) {
+        MCPP_LOG_ERROR("Unknown exception in generic notification handler");
     }
     
     // Dispatch table for O(1) lookup instead of linear if-else chain
+    // Each handler is wrapped in try-catch to ensure one failure doesn't affect others
     using Handler = std::function<void(McpClient*, const Json&)>;
     static const std::unordered_map<std::string_view, Handler> dispatch_table = {
         {"notifications/tools/list_changed", [](McpClient* self, const Json&) {
@@ -764,25 +772,31 @@ void McpClient::dispatch_notification(const Json& message) {
             if (self->log_message_handler_) {
                 std::string level_str = params.value("level", "info");
                 LoggingLevel level = logging_level_from_string(level_str);
-                auto logger = params.value("logger", "");
+                auto logger_name = params.value("logger", "");
                 auto data = params.value("data", "");
-                self->log_message_handler_(level, logger, data);
+                self->log_message_handler_(level, logger_name, data);
             }
         }},
         {"notifications/progress", [](McpClient* self, const Json& params) {
             if (self->progress_handler_) {
-                auto progress = ProgressNotification::from_json(params);
-                self->progress_handler_(progress);
+                auto prog = ProgressNotification::from_json(params);
+                self->progress_handler_(prog);
             }
         }}
     };
 
     if (auto it = dispatch_table.find(method); it != dispatch_table.end()) {
-        it->second(this, params);
+        try {
+            it->second(this, params);
+        } catch (const std::exception& e) {
+            MCPP_LOG_ERROR("Exception in notification handler for '" + method + "': " + std::string(e.what()));
+        } catch (...) {
+            MCPP_LOG_ERROR("Unknown exception in notification handler for '" + method + "'");
+        }
     }
 }
 
-int McpClient::next_request_id() {
+uint64_t McpClient::next_request_id() {
     return ++request_id_;
 }
 

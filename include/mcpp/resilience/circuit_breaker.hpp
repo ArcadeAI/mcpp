@@ -1,5 +1,4 @@
-#ifndef MCPP_RESILIENCE_CIRCUIT_BREAKER_HPP
-#define MCPP_RESILIENCE_CIRCUIT_BREAKER_HPP
+#pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Circuit Breaker
@@ -240,5 +239,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_RESILIENCE_CIRCUIT_BREAKER_HPP
 

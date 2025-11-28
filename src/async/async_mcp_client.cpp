@@ -943,40 +943,63 @@ void AsyncMcpClient::dispatch_notification(const std::string& method, const Json
         progress = progress_handler_;
     }
     
+    // Helper to safely invoke handlers with exception protection
+    auto safe_invoke = [](auto&& handler, auto&&... args) {
+        try {
+            if (handler) {
+                handler(std::forward<decltype(args)>(args)...);
+            }
+        } catch (const std::exception& e) {
+            MCPP_LOG_ERROR("Exception in notification handler: " + std::string(e.what()));
+        } catch (...) {
+            MCPP_LOG_ERROR("Unknown exception in notification handler");
+        }
+    };
+    
     // Call generic handler first
-    if (generic_handler) {
-        generic_handler(method, params);
-    }
+    safe_invoke(generic_handler, method, params);
 
     // Dispatch based on method
     if (method == "notifications/tools/list_changed") {
-        if (tool_changed) tool_changed();
+        safe_invoke(tool_changed);
     }
     else if (method == "notifications/resources/list_changed") {
-        if (resource_changed) resource_changed();
+        safe_invoke(resource_changed);
     }
     else if (method == "notifications/resources/updated") {
         if (resource_updated) {
-            auto notification = ResourceUpdatedNotification::from_json(params);
-            resource_updated(notification.uri);
+            try {
+                auto notification = ResourceUpdatedNotification::from_json(params);
+                safe_invoke(resource_updated, notification.uri);
+            } catch (const std::exception& e) {
+                MCPP_LOG_ERROR("Failed to parse resource updated notification: " + std::string(e.what()));
+            }
         }
     }
     else if (method == "notifications/prompts/list_changed") {
-        if (prompt_changed) prompt_changed();
+        safe_invoke(prompt_changed);
     }
     else if (method == "notifications/message") {
         if (log_message) {
-            std::string level_str = params.value("level", "info");
-            LoggingLevel level = logging_level_from_string(level_str);
-            auto logger = params.value("logger", "");
-            auto data = params.value("data", "");
-            log_message(level, logger, data);
+            try {
+                std::string level_str = params.value("level", "info");
+                LoggingLevel level = logging_level_from_string(level_str);
+                auto logger_name = params.value("logger", "");
+                auto data = params.value("data", "");
+                safe_invoke(log_message, level, logger_name, data);
+            } catch (const std::exception& e) {
+                MCPP_LOG_ERROR("Failed to parse log message notification: " + std::string(e.what()));
+            }
         }
     }
     else if (method == "notifications/progress") {
         if (progress) {
-            auto prog = ProgressNotification::from_json(params);
-            progress(prog);
+            try {
+                auto prog = ProgressNotification::from_json(params);
+                safe_invoke(progress, prog);
+            } catch (const std::exception& e) {
+                MCPP_LOG_ERROR("Failed to parse progress notification: " + std::string(e.what()));
+            }
         }
     }
 }
@@ -985,7 +1008,7 @@ void AsyncMcpClient::dispatch_notification(const std::string& method, const Json
 // Internal: Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-int AsyncMcpClient::next_request_id() {
+uint64_t AsyncMcpClient::next_request_id() {
     return ++request_id_;
 }
 

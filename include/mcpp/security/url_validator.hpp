@@ -1,5 +1,4 @@
-#ifndef MCPP_SECURITY_URL_VALIDATOR_HPP
-#define MCPP_SECURITY_URL_VALIDATOR_HPP
+#pragma once
 
 #include <ada.h>
 
@@ -117,5 +116,4 @@ namespace detail {
 
 }  // namespace mcpp::security
 
-#endif  // MCPP_SECURITY_URL_VALIDATOR_HPP
 

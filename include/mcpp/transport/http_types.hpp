@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_HTTP_TYPES_HPP
-#define MCPP_TRANSPORT_HTTP_TYPES_HPP
+#pragma once
 
 #include <ada.h>
 
@@ -203,4 +202,3 @@ std::optional<UrlComponents> parse_url(const std::string& url);
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_HTTP_TYPES_HPP

@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_HTTP_CLIENT_HPP
-#define MCPP_TRANSPORT_HTTP_CLIENT_HPP
+#pragma once
 
 #include "mcpp/transport/http_types.hpp"
 
@@ -178,5 +177,4 @@ std::unique_ptr<IHttpClient> make_http_client();
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_HTTP_CLIENT_HPP
 

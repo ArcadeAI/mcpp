@@ -1,5 +1,4 @@
-#ifndef MCPP_ASYNC_ASYNC_MCP_CLIENT_HPP
-#define MCPP_ASYNC_ASYNC_MCP_CLIENT_HPP
+#pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Async MCP Client
@@ -350,7 +349,7 @@ private:
     void dispatch_error(int id, const McpError& error);
 
     // Helpers
-    int next_request_id();
+    uint64_t next_request_id();
     AsyncMcpResult<Json> extract_result(const Json& response);
 
     // Configuration
@@ -401,5 +400,4 @@ private:
 
 }  // namespace mcpp::async
 
-#endif  // MCPP_ASYNC_ASYNC_MCP_CLIENT_HPP
 

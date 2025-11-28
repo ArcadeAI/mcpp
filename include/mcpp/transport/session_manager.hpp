@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_SESSION_MANAGER_HPP
-#define MCPP_TRANSPORT_SESSION_MANAGER_HPP
+#pragma once
 
 #include <chrono>
 #include <functional>
@@ -274,5 +273,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_SESSION_MANAGER_HPP
 

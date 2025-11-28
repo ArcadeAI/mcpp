@@ -1,5 +1,4 @@
-#ifndef MCPP_ASYNC_ASYNC_PROCESS_TRANSPORT_HPP
-#define MCPP_ASYNC_ASYNC_PROCESS_TRANSPORT_HPP
+#pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Async Process Transport
@@ -170,5 +169,4 @@ inline std::unique_ptr<IAsyncTransport> make_async_process_transport(
 
 }  // namespace mcpp::async
 
-#endif  // MCPP_ASYNC_ASYNC_PROCESS_TRANSPORT_HPP
 

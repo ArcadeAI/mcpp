@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_RETRY_POLICY_HPP
-#define MCPP_TRANSPORT_RETRY_POLICY_HPP
+#pragma once
 
 #include "mcpp/transport/transport_error.hpp"
 
@@ -141,5 +140,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_RETRY_POLICY_HPP
 

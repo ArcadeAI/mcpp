@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_MCP_CLIENT_HPP
-#define MCPP_CLIENT_MCP_CLIENT_HPP
+#pragma once
 
 #include "mcpp/protocol/mcp_types.hpp"
 #include "mcpp/transport/http_transport.hpp"
@@ -90,7 +89,7 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Connect to the MCP server and optionally initialize
-    McpResult<InitializeResult> connect();
+    [[nodiscard]] McpResult<InitializeResult> connect();
 
     /// Disconnect from the server
     void disconnect();
@@ -119,10 +118,10 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// List available tools
-    McpResult<ListToolsResult> list_tools(std::optional<std::string> cursor = std::nullopt);
+    [[nodiscard]] McpResult<ListToolsResult> list_tools(std::optional<std::string> cursor = std::nullopt);
 
     /// Call a tool with optional progress token
-    McpResult<CallToolResult> call_tool(
+    [[nodiscard]] McpResult<CallToolResult> call_tool(
         const std::string& name,
         const Json& arguments = {},
         std::optional<ProgressToken> progress_token = std::nullopt
@@ -133,22 +132,22 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// List available resources
-    McpResult<ListResourcesResult> list_resources(std::optional<std::string> cursor = std::nullopt);
+    [[nodiscard]] McpResult<ListResourcesResult> list_resources(std::optional<std::string> cursor = std::nullopt);
 
     /// Read a resource with optional progress token
-    McpResult<ReadResourceResult> read_resource(
+    [[nodiscard]] McpResult<ReadResourceResult> read_resource(
         const std::string& uri,
         std::optional<ProgressToken> progress_token = std::nullopt
     );
 
     /// Subscribe to resource updates (requires server support)
-    McpResult<void> subscribe_resource(const std::string& uri);
+    [[nodiscard]] McpResult<void> subscribe_resource(const std::string& uri);
 
     /// Unsubscribe from resource updates
-    McpResult<void> unsubscribe_resource(const std::string& uri);
+    [[nodiscard]] McpResult<void> unsubscribe_resource(const std::string& uri);
 
     /// List available resource templates (URI templates for dynamic resources)
-    McpResult<ListResourceTemplatesResult> list_resource_templates(
+    [[nodiscard]] McpResult<ListResourceTemplatesResult> list_resource_templates(
         std::optional<std::string> cursor = std::nullopt
     );
 
@@ -157,10 +156,10 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// List available prompts
-    McpResult<ListPromptsResult> list_prompts(std::optional<std::string> cursor = std::nullopt);
+    [[nodiscard]] McpResult<ListPromptsResult> list_prompts(std::optional<std::string> cursor = std::nullopt);
 
     /// Get a prompt with arguments and optional progress token
-    McpResult<GetPromptResult> get_prompt(
+    [[nodiscard]] McpResult<GetPromptResult> get_prompt(
         const std::string& name,
         const std::unordered_map<std::string, std::string>& arguments = {},
         std::optional<ProgressToken> progress_token = std::nullopt
@@ -296,7 +295,7 @@ private:
     void handle_server_request(const Json& request);
     void send_response(const Json& request_id, const McpResult<Json>& result);
     void dispatch_notification(const Json& message);
-    int next_request_id();
+    uint64_t next_request_id();
 
     // Configuration
     McpClientConfig config_;
@@ -334,5 +333,4 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_MCP_CLIENT_HPP
 

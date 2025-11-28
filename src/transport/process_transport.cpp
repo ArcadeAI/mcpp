@@ -16,6 +16,9 @@ namespace mcpp {
 
 namespace {
 
+// Named constants for magic numbers
+constexpr useconds_t kProcessTerminationWaitUs = 100'000;  // 100ms wait before SIGKILL
+
 TransportError make_error(TransportError::Category cat, const std::string& msg) {
     return TransportError{cat, msg, std::nullopt};
 }
@@ -29,6 +32,32 @@ ProcessTransport::ProcessTransport(ProcessTransportConfig config)
 ProcessTransport::~ProcessTransport() {
     stop();
 }
+
+// Platform-specific allowed command prefixes
+#if defined(__APPLE__)
+// macOS paths
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/", "/opt/homebrew/bin/",
+    "/usr/sbin/", "/sbin/", "/Applications/"
+};
+#elif defined(__linux__)
+// Linux paths (including snap and flatpak)
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/", "/usr/sbin/", "/sbin/",
+    "/snap/bin/", "/var/lib/flatpak/", "/home/", "~/.local/bin/"
+};
+#elif defined(_WIN32)
+// Windows paths
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "C:\\Windows\\System32\\", "C:\\Windows\\", "C:\\Program Files\\",
+    "C:\\Program Files (x86)\\", "C:\\Users\\"
+};
+#else
+// Fallback for unknown platforms - be restrictive
+const std::vector<std::string> kAllowedCommandPrefixes = {
+    "/usr/bin/", "/usr/local/bin/", "/bin/"
+};
+#endif
 
 // Helper to validate command for security
 static bool is_safe_command(const std::string& command, const std::vector<std::string>& args) {
@@ -56,14 +85,15 @@ static bool is_safe_command(const std::string& command, const std::vector<std::s
     
     // Reject absolute paths outside of expected locations (defense in depth)
     // Allow relative commands (will be resolved via PATH)
-    if (command[0] == '/') {
-        // Only allow commands from standard bin directories
-        const std::vector<std::string> allowed_prefixes = {
-            "/usr/bin/", "/usr/local/bin/", "/bin/", "/opt/homebrew/bin/",
-            "/usr/sbin/", "/sbin/"
-        };
+#if defined(_WIN32)
+    const bool is_absolute = (command.size() >= 2 && command[1] == ':');
+#else
+    const bool is_absolute = (!command.empty() && command[0] == '/');
+#endif
+    
+    if (is_absolute) {
         bool allowed = false;
-        for (const auto& prefix : allowed_prefixes) {
+        for (const auto& prefix : kAllowedCommandPrefixes) {
             if (command.rfind(prefix, 0) == 0) {
                 allowed = true;
                 break;
@@ -235,7 +265,7 @@ void ProcessTransport::stop() {
 
         if (wait_result == 0) {
             // Child still running, give it a moment
-            usleep(100000);  // 100ms
+            usleep(kProcessTerminationWaitUs);
             wait_result = waitpid(child_pid_, &status, WNOHANG);
 
             if (wait_result == 0) {

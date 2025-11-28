@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_TRANSPORT_ERROR_HPP
-#define MCPP_TRANSPORT_TRANSPORT_ERROR_HPP
+#pragma once
 
 #include "mcpp/transport/http_client.hpp"
 
@@ -80,5 +79,4 @@ using HttpResult = tl::expected<T, HttpTransportError>;
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_TRANSPORT_ERROR_HPP
 

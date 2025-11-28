@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_HTTP_TRANSPORT_CONFIG_HPP
-#define MCPP_TRANSPORT_HTTP_TRANSPORT_CONFIG_HPP
+#pragma once
 
 #include <chrono>
 #include <memory>
@@ -147,5 +146,4 @@ struct HttpTransportConfig {
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_HTTP_TRANSPORT_CONFIG_HPP
 

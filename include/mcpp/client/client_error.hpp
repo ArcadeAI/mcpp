@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_CLIENT_ERROR_HPP
-#define MCPP_CLIENT_CLIENT_ERROR_HPP
+#pragma once
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MCP Client Error
@@ -59,12 +58,12 @@ struct ClientError {
         return {ClientErrorCode::NotInitialized, "Client has not completed initialization", std::nullopt};
     }
 
-    [[nodiscard]] static ClientError transport_error(const std::string& msg) {
-        return {ClientErrorCode::TransportError, msg, std::nullopt};
+    [[nodiscard]] static ClientError transport_error(std::string msg) {
+        return {ClientErrorCode::TransportError, std::move(msg), std::nullopt};
     }
 
-    [[nodiscard]] static ClientError protocol_error(const std::string& msg) {
-        return {ClientErrorCode::ProtocolError, msg, std::nullopt};
+    [[nodiscard]] static ClientError protocol_error(std::string msg) {
+        return {ClientErrorCode::ProtocolError, std::move(msg), std::nullopt};
     }
 
     [[nodiscard]] static ClientError timeout_error() {
@@ -105,5 +104,4 @@ using AsyncMcpResult = ClientResult<T>;
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_CLIENT_ERROR_HPP
 

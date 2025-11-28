@@ -1,5 +1,4 @@
-#ifndef MCPP_CLIENT_ASYNC_HANDLERS_HPP
-#define MCPP_CLIENT_ASYNC_HANDLERS_HPP
+#pragma once
 
 #include "mcpp/protocol/mcp_types.hpp"
 
@@ -113,5 +112,4 @@ public:
 
 }  // namespace mcpp
 
-#endif  // MCPP_CLIENT_ASYNC_HANDLERS_HPP
 

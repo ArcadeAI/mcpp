@@ -1,5 +1,4 @@
-#ifndef MCPP_TRANSPORT_BACKOFF_POLICY_HPP
-#define MCPP_TRANSPORT_BACKOFF_POLICY_HPP
+#pragma once
 
 #include <chrono>
 #include <cmath>
@@ -164,6 +163,5 @@ private:
 
 }  // namespace mcpp
 
-#endif  // MCPP_TRANSPORT_BACKOFF_POLICY_HPP
 
 

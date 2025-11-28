@@ -495,10 +495,22 @@ HttpResult<void> HttpTransport::do_post(const Json& message) {
     
     if (session_header_value) {
         if (session_manager_.connection_established(*session_header_value)) {
-            get_logger().info_fmt("Session established: {}", *session_header_value);
+            // Truncate session ID in logs for security (don't expose full token)
+            const auto& sid = *session_header_value;
+            std::string truncated = sid.size() > 16 
+                ? sid.substr(0, 8) + "..." + sid.substr(sid.size() - 4)
+                : sid;
+            get_logger().info_fmt("Session established: {}", truncated);
         } else {
-            get_logger().warn_fmt("Rejected invalid session ID from server (length={}, sanitized)", 
-                                   session_header_value->size());
+            // Sanitize invalid session ID - only show length and first 20 chars
+            const auto& sid = *session_header_value;
+            std::string preview = sid.substr(0, std::min(sid.size(), std::size_t{20}));
+            // Remove any control characters from preview
+            for (char& c : preview) {
+                if (c < 32 || c > 126) c = '?';
+            }
+            get_logger().warn_fmt("Rejected invalid session ID from server (length={}, preview='{}')", 
+                                   sid.size(), preview);
         }
     }
 
