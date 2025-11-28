@@ -1,0 +1,37 @@
+# Project Rules: C++ MCP Client
+
+## Goals
+- Build a Model Context Protocol (MCP) Client in C++.
+- Focus on **Fun**, **Skill Improvement**, and **Code Quality**.
+- Use **Latest C++ Standards** (C++20/23) and **Best Practices** (RAII, Smart Pointers, Concepts, Coroutines).
+- **Avoid** heavy off-the-shelf solutions where feasible (re-implement for learning), but design for **Interchangeability** (Interfaces/DI).
+- **High Test Coverage** using modern testing patterns.
+- Proactively look for safe parallel/vectorized improvements wherever they deliver value.
+- Aggressively hunt for unsafe allocation patterns; adopt modern memory-safety features (smart pointers, `std::span`, `std::pmr`, sanitizers, hardened allocators) whenever they improve robustness.
+
+## Interaction Workflow (TDD)
+1. **Assistant**: Writes a failing test (or test suite) covering a specific feature/requirement.
+2. **User**: Implements the code to make the test pass.
+3. **Assistant**: Reviews the code, offering tips on **Performance**, **Modern C++ features**, and **Refactoring**.
+
+## Coding Standards
+- **Standard**: C++20 minimum (prefer C++23 features if available/stable).
+- **Style**: Follow standard C++ conventions (e.g., Google C++ Style or LLVM, consistency is key).
+- **Architecture**: 
+  - Modular design.
+  - Use Interfaces/Concepts for easy swapping of implementations (e.g., `Transport` layer).
+  - Error handling: Use `std::expected` (or C++20 equivalent implementation) over exceptions where possible for control flow.
+- **Memory Safety**:
+  - Prefer owning smart pointers, RAII handles, and allocator-aware containers.
+  - Use tools like AddressSanitizer, LeakSanitizer, Hardware-ASan, or hardened allocators (mimalloc, snmalloc) when appropriate.
+  - Validate URL parsing/elicitation to avoid SSRF or malformed endpoint issues; centralize parsing utilities.
+- **Testing**: 
+  - Focus on behavioral testing.
+  - Mock external dependencies (Transports, I/O).
+
+## Communication
+- **No Fluff**: Avoid lengthy Markdown explanations or file format descriptions unless explicitly asked.
+- **Focus**: Code-centric responses.
+- **Suggestions**: Proactively suggest optimizations (memory layout, move semantics, constexpr, etc.) and design patterns.
+- **Formatting**: LLMs should avoid replying with Markdown or other formatted file dumps unless the user explicitly requests it.
+

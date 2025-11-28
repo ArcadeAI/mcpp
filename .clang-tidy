@@ -1,0 +1,22 @@
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*
+WarningsAsErrors: >
+  clang-analyzer-*,
+  bugprone-argument-comment,
+  cppcoreguidelines-pro-type-member-init,
+  modernize-use-nullptr
+HeaderFilterRegex: 'include/.*|src/.*'
+AnalyzeTemporaryDtors: false
+FormatStyle: file
+User: mcpp
+ExtraArgs:
+  - -std=c++20
+
+
+

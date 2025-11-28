@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE/Editor
+.cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Development notes (tickets, planning docs)
+.dev/
+
+# Obsidian
+.obsidian/
+
+# Misc
+Untitled/
+
+# Build symlink
+compile_commands.json
