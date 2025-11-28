@@ -205,6 +205,7 @@ add_executable(mcpp_tests
     tests/circuit_breaker_test.cpp
     tests/async_process_stderr_test.cpp
     tests/spdlog_logger_test.cpp
+    tests/code_review_fixes_test.cpp
 )
 target_include_directories(mcpp_tests PRIVATE tests)
 target_link_libraries(mcpp_tests PRIVATE mcpp_lib Catch2::Catch2WithMain)

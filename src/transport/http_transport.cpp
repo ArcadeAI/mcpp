@@ -81,6 +81,9 @@ void HttpTransport::start() {
     MCPP_LOG_INFO("HttpTransport starting");
     get_logger().debug_fmt("Base URL: {}", config_.base_url);
 
+    // Reset HTTP client to allow requests after previous stop/start cycle
+    http_client_->reset();
+
     // Transition session state to Connecting
     session_manager_.begin_connect();
 
@@ -574,17 +577,30 @@ HttpResult<void> HttpTransport::handle_session_expired(const Json& original_mess
         }
     }
 
-    // Extract new session ID
-    const auto session_it = response.headers.find("Mcp-Session-Id");
-    const bool has_session_header = (session_it != response.headers.end());
-    if (has_session_header) {
-        const std::string& new_session_id = session_it->second;
-        if (session_manager_.connection_established(new_session_id)) {
+    // Extract new session ID - use case-insensitive lookup (HTTP headers are case-insensitive)
+    std::optional<std::string> new_session_id;
+    for (const auto& [name, value] : response.headers) {
+        std::string lower_name = name;
+        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(),
+                      [](unsigned char c) { return std::tolower(c); });
+        if (lower_name == "mcp-session-id") {
+            new_session_id = value;
+            break;
+        }
+    }
+    
+    if (new_session_id) {
+        if (session_manager_.connection_established(*new_session_id)) {
             session_manager_.clear_last_event_id();  // Clear old event ID after reconnection
-            get_logger().info_fmt("Session re-established: {}", new_session_id);
+            // Truncate session ID in logs for security
+            const auto& sid = *new_session_id;
+            std::string truncated = sid.size() > 16 
+                ? sid.substr(0, 8) + "..." + sid.substr(sid.size() - 4)
+                : sid;
+            get_logger().info_fmt("Session re-established: {}", truncated);
         } else {
             get_logger().warn_fmt("Rejected invalid session ID from server (length={}, sanitized)",
-                                   new_session_id.size());
+                                   new_session_id->size());
         }
     }
 

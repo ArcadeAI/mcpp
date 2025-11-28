@@ -138,6 +138,28 @@ TransportResult<void> ProcessTransport::start() {
     // Expensive operations OUTSIDE the lock
     // ─────────────────────────────────────────────────────────────────────────
 
+    // CRITICAL: Pre-allocate argv BEFORE fork() to avoid malloc deadlock.
+    // After fork(), only the calling thread exists in the child. If another
+    // thread held the malloc mutex when fork() occurred, any allocation in
+    // the child will deadlock forever.
+    //
+    // We store copies of strings to avoid const_cast (execvp takes char*const[])
+    // The strings must outlive the fork/exec, so we keep them in a vector.
+    std::vector<std::string> argv_storage;
+    argv_storage.reserve(config_.args.size() + 1);
+    argv_storage.push_back(config_.command);
+    for (const auto& arg : config_.args) {
+        argv_storage.push_back(arg);
+    }
+    
+    // Build char* array pointing to our storage
+    std::vector<char*> argv;
+    argv.reserve(argv_storage.size() + 1);
+    for (auto& str : argv_storage) {
+        argv.push_back(str.data());
+    }
+    argv.push_back(nullptr);
+
     // Create pipes for stdin and stdout
     int stdin_pipe[2];   // [read, write] - we write to stdin_pipe[1]
     int stdout_pipe[2];  // [read, write] - we read from stdout_pipe[0]
@@ -170,7 +192,7 @@ TransportResult<void> ProcessTransport::start() {
     }
 
     if (pid == 0) {
-        // Child process
+        // Child process - NO ALLOCATIONS ALLOWED (malloc deadlock risk)
         // Redirect stdin
         dup2(stdin_pipe[0], STDIN_FILENO);
         close(stdin_pipe[0]);
@@ -200,15 +222,7 @@ TransportResult<void> ProcessTransport::start() {
                 break;
         }
 
-        // Build argv
-        std::vector<char*> argv;
-        argv.push_back(const_cast<char*>(config_.command.c_str()));
-        for (const auto& arg : config_.args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-
-        // Execute
+        // Execute (argv was pre-allocated before fork)
         execvp(config_.command.c_str(), argv.data());
 
         // If execvp returns, it failed
@@ -237,53 +251,65 @@ TransportResult<void> ProcessTransport::start() {
 }
 
 void ProcessTransport::stop() {
-    std::lock_guard lock(mutex_);
+    pid_t pid_to_terminate = -1;
+    int stdin_to_close = -1;
+    int stdout_to_close = -1;
+    
+    // Extract state under lock, then release before blocking operations
+    {
+        std::lock_guard lock(mutex_);
 
-    if (running_ == false) {
-        // Also clear starting_ in case stop() is called during start()
+        if (running_ == false) {
+            // Also clear starting_ in case stop() is called during start()
+            starting_ = false;
+            return;
+        }
+
+        // Capture values to close/terminate outside the lock
+        pid_to_terminate = child_pid_;
+        stdin_to_close = stdin_fd_;
+        stdout_to_close = stdout_fd_;
+        
+        // Mark as not running immediately
+        running_ = false;
         starting_ = false;
-        return;
-    }
-
-    // Close pipes
-    if (stdin_fd_ != -1) {
-        close(stdin_fd_);
+        child_pid_ = -1;
         stdin_fd_ = -1;
-    }
-    if (stdout_fd_ != -1) {
-        close(stdout_fd_);
         stdout_fd_ = -1;
+        
+        // Reset read buffer state for potential restart
+        read_buffer_pos_ = 0;
+        read_buffer_len_ = 0;
+    }
+    
+    // Close pipes outside the lock (non-blocking)
+    if (stdin_to_close != -1) {
+        close(stdin_to_close);
+    }
+    if (stdout_to_close != -1) {
+        close(stdout_to_close);
     }
 
-    // Terminate child process
-    if (child_pid_ > 0) {
-        kill(child_pid_, SIGTERM);
+    // Terminate child process outside the lock (may block briefly)
+    if (pid_to_terminate > 0) {
+        kill(pid_to_terminate, SIGTERM);
 
         // Wait for child to exit (with timeout)
         int status;
-        int wait_result = waitpid(child_pid_, &status, WNOHANG);
+        int wait_result = waitpid(pid_to_terminate, &status, WNOHANG);
 
         if (wait_result == 0) {
-            // Child still running, give it a moment
+            // Child still running, give it a moment (sleep outside lock)
             usleep(kProcessTerminationWaitUs);
-            wait_result = waitpid(child_pid_, &status, WNOHANG);
+            wait_result = waitpid(pid_to_terminate, &status, WNOHANG);
 
             if (wait_result == 0) {
                 // Force kill
-                kill(child_pid_, SIGKILL);
-                waitpid(child_pid_, &status, 0);
+                kill(pid_to_terminate, SIGKILL);
+                waitpid(pid_to_terminate, &status, 0);
             }
         }
-
-        child_pid_ = -1;
     }
-
-    running_ = false;
-    starting_ = false;
-    
-    // Reset read buffer state for potential restart
-    read_buffer_pos_ = 0;
-    read_buffer_len_ = 0;
     
     MCPP_LOG_INFO("Stopped process");
 }
@@ -376,19 +402,24 @@ TransportResult<void> ProcessTransport::send(const Json& message) {
         data = body + "\n";
     }
 
-    // Write to stdin
-    ssize_t written = write(stdin_fd_, data.c_str(), data.size());
-    if (written == -1) {
-        return tl::unexpected(make_error(
-            TransportError::Category::Network,
-            "Failed to write to process: " + std::string(strerror(errno))
-        ));
-    }
-    if (static_cast<size_t>(written) != data.size()) {
-        return tl::unexpected(make_error(
-            TransportError::Category::Network,
-            "Incomplete write to process"
-        ));
+    // Write to stdin - loop to handle partial writes (POSIX only guarantees
+    // atomic writes for small payloads; large JSON frames may be split)
+    const char* ptr = data.c_str();
+    size_t remaining = data.size();
+    
+    while (remaining > 0) {
+        ssize_t written = write(stdin_fd_, ptr, remaining);
+        if (written == -1) {
+            if (errno == EINTR) {
+                continue;  // Interrupted by signal, retry
+            }
+            return tl::unexpected(make_error(
+                TransportError::Category::Network,
+                "Failed to write to process: " + std::string(strerror(errno))
+            ));
+        }
+        ptr += written;
+        remaining -= static_cast<size_t>(written);
     }
 
     return {};

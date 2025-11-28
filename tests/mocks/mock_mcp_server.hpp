@@ -362,6 +362,7 @@ public:
     }
 
     void cancel() override {}
+    void reset() override {}
 
 private:
     MockMcpServer& server_;

@@ -165,6 +165,9 @@ public:
 
     // Cancel all pending requests
     virtual void cancel() = 0;
+    
+    // Reset the client for reuse after cancel (allows stop/start cycles)
+    virtual void reset() = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -147,12 +147,18 @@ public:
         response_queue_.clear();
     }
 
-    // Reset everything
-    void reset() {
+    // Reset mock state (for test setup, NOT the IHttpClient::reset interface)
+    void reset_mock() {
         std::lock_guard<std::mutex> lock(mutex_);
         requests_.clear();
         response_queue_.clear();
         response_handler_ = nullptr;
+        cancelled_ = false;
+    }
+    
+    // IHttpClient::reset - only resets the cancelled flag for stop/start cycles
+    void reset() override {
+        std::lock_guard<std::mutex> lock(mutex_);
         cancelled_ = false;
     }
 

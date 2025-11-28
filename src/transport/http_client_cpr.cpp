@@ -161,6 +161,11 @@ public:
         // The cancelled_ flag prevents new requests from starting.
         // In-flight requests will complete naturally.
     }
+    
+    void reset() override {
+        // Reset the cancelled flag to allow new requests after stop/start cycle
+        cancelled_.store(false);
+    }
 
 private:
     // Build URL and headers for request

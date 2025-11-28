@@ -539,6 +539,27 @@ asio::awaitable<TransportResult<Json>> AsyncProcessTransport::read_line_message(
 // ═══════════════════════════════════════════════════════════════════════════
 
 TransportResult<void> AsyncProcessTransport::spawn_process() {
+    // CRITICAL: Pre-allocate argv BEFORE fork() to avoid malloc deadlock.
+    // After fork(), only the calling thread exists in the child. If another
+    // thread held the malloc mutex when fork() occurred, any allocation in
+    // the child will deadlock forever.
+    //
+    // We store copies of strings to avoid const_cast (execvp takes char*const[])
+    std::vector<std::string> argv_storage;
+    argv_storage.reserve(config_.args.size() + 1);
+    argv_storage.push_back(config_.command);
+    for (const auto& arg : config_.args) {
+        argv_storage.push_back(arg);
+    }
+    
+    // Build char* array pointing to our storage
+    std::vector<char*> argv;
+    argv.reserve(argv_storage.size() + 1);
+    for (auto& str : argv_storage) {
+        argv.push_back(str.data());
+    }
+    argv.push_back(nullptr);
+
     // Create pipes
     int stdin_pipe[2];
     int stdout_pipe[2];
@@ -583,7 +604,7 @@ TransportResult<void> AsyncProcessTransport::spawn_process() {
     }
 
     if (pid == 0) {
-        // Child process
+        // Child process - NO ALLOCATIONS ALLOWED (malloc deadlock risk)
         dup2(stdin_pipe[0], STDIN_FILENO);
         close(stdin_pipe[0]);
         close(stdin_pipe[1]);
@@ -613,14 +634,7 @@ TransportResult<void> AsyncProcessTransport::spawn_process() {
             }
         }
 
-        // Build argv
-        std::vector<char*> argv;
-        argv.push_back(const_cast<char*>(config_.command.c_str()));
-        for (const auto& arg : config_.args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-
+        // Execute (argv was pre-allocated before fork)
         execvp(config_.command.c_str(), argv.data());
         _exit(127);
     }

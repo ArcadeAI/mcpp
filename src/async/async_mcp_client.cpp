@@ -28,6 +28,17 @@ AsyncMcpClient::AsyncMcpClient(
 }
 
 AsyncMcpClient::~AsyncMcpClient() {
+    // CRITICAL: Set shutdown flag FIRST to prevent use-after-free in async handlers
+    // Any pending timeout handlers will check this flag and bail out
+    shutting_down_.store(true, std::memory_order_release);
+    
+    // Cancel all pending timers to reduce chance of handlers firing
+    for (auto& [id, req] : pending_requests_) {
+        if (req && req->timeout_timer) {
+            req->timeout_timer->cancel();
+        }
+    }
+    
     // Note: Can't co_await in destructor
     // User should call disconnect() before destroying
 }
@@ -643,7 +654,7 @@ asio::awaitable<AsyncMcpResult<Json>> AsyncMcpClient::send_request(
         });
     }
 
-    int id = next_request_id();
+    uint64_t id = next_request_id();
 
     // Build request
     Json request = {
@@ -663,12 +674,16 @@ asio::awaitable<AsyncMcpResult<Json>> AsyncMcpClient::send_request(
     auto& req = pending_requests_[id];
 
     // Set timeout if configured
-    // IMPORTANT: We capture only `this` and `id`, then look up the request in the map.
-    // This avoids dangling pointer issues if the request completes before timeout fires.
+    // CRITICAL: Check shutting_down_ flag to prevent use-after-free.
+    // If client is being destroyed, the handler must not access any members.
     if (config_.request_timeout.count() > 0) {
         req->timeout_timer->expires_after(config_.request_timeout);
         req->timeout_timer->async_wait(asio::bind_executor(strand_,
             [this, id](asio::error_code ec) {
+                // Check if client is shutting down to prevent use-after-free
+                if (shutting_down_.load(std::memory_order_acquire)) {
+                    return;  // Client being destroyed, don't access members
+                }
                 if (ec) {
                     return;  // Timer cancelled or error
                 }
@@ -790,16 +805,30 @@ asio::awaitable<void> AsyncMcpClient::message_dispatcher() {
         }
         else if (has_id) {
             // Response to our request
-            // JSON-RPC 2.0 allows string or integer IDs - we use integers internally
-            // but must handle string IDs from servers gracefully
+            // JSON-RPC 2.0 allows string or integer IDs - we use uint64_t internally
+            // Handle both signed and unsigned integer IDs from servers
             const auto& id_json = message["id"];
-            if (id_json.is_number_integer()) {
-                int id = id_json.get<int>();
+            if (id_json.is_number_unsigned()) {
+                uint64_t id = id_json.get<uint64_t>();
                 if (message.contains("error")) {
                     auto error = McpError::from_json(message["error"]);
                     dispatch_error(id, error);
                 } else {
                     dispatch_response(id, message);
+                }
+            } else if (id_json.is_number_integer()) {
+                // Handle signed integers (convert to uint64_t)
+                int64_t signed_id = id_json.get<int64_t>();
+                if (signed_id >= 0) {
+                    uint64_t id = static_cast<uint64_t>(signed_id);
+                    if (message.contains("error")) {
+                        auto error = McpError::from_json(message["error"]);
+                        dispatch_error(id, error);
+                    } else {
+                        dispatch_response(id, message);
+                    }
+                } else {
+                    MCPP_LOG_WARN("Received response with negative ID, ignoring");
                 }
             } else {
                 // String ID - log warning and ignore (we only use integer IDs)
@@ -897,7 +926,7 @@ asio::awaitable<void> AsyncMcpClient::send_error_response(
     }
 }
 
-void AsyncMcpClient::dispatch_response(int id, const Json& response) {
+void AsyncMcpClient::dispatch_response(uint64_t id, const Json& response) {
     auto it = pending_requests_.find(id);
     if (it == pending_requests_.end()) {
         MCPP_LOG_WARN("Received response for unknown request ID: " + std::to_string(id));
@@ -908,7 +937,7 @@ void AsyncMcpClient::dispatch_response(int id, const Json& response) {
     it->second->channel->try_send(asio::error_code{}, std::move(result));
 }
 
-void AsyncMcpClient::dispatch_error(int id, const McpError& error) {
+void AsyncMcpClient::dispatch_error(uint64_t id, const McpError& error) {
     auto it = pending_requests_.find(id);
     if (it == pending_requests_.end()) {
         MCPP_LOG_WARN("Received error for unknown request ID: " + std::to_string(id));

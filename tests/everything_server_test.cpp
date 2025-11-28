@@ -503,6 +503,190 @@ TEST_CASE("Everything server - roots handler", "[everything][handlers][roots]") 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Prompts Test
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Everything server - prompts", "[everything][prompts]") {
+    asio::io_context io;
+    
+    AsyncProcessConfig config;
+    config.command = "mcp-server-everything";
+    config.args = {};
+    config.use_content_length_framing = false;
+    
+    auto transport = std::make_unique<AsyncProcessTransport>(io.get_executor(), config);
+    auto roots_handler = std::make_shared<StaticRootsHandler>(std::vector<Root>{});
+    
+    AsyncMcpClientConfig client_config;
+    client_config.auto_initialize = true;
+    client_config.client_name = "mcpp-prompts-test";
+    client_config.client_version = "1.0.0";
+    client_config.capabilities.roots = ClientCapabilities::Roots{};
+    client_config.request_timeout = std::chrono::seconds(10);
+    
+    AsyncMcpClient client(std::move(transport), client_config);
+    client.set_roots_handler(roots_handler);
+    
+    auto connect_result = run_with_timeout(io, client.connect());
+    REQUIRE(connect_result.has_value());
+    
+    // List prompts
+    auto prompts_result = run_with_timeout(io, client.list_prompts());
+    REQUIRE(prompts_result.has_value());
+    REQUIRE(prompts_result->prompts.size() >= 2);
+    
+    // Find and test simple_prompt
+    bool found_simple = false;
+    for (const auto& prompt : prompts_result->prompts) {
+        if (prompt.name == "simple_prompt") {
+            found_simple = true;
+            INFO("Found simple_prompt: " << prompt.description.value_or("no description"));
+            break;
+        }
+    }
+    REQUIRE(found_simple);
+    
+    // Get a prompt
+    auto get_result = run_with_timeout(io, client.get_prompt("simple_prompt", {}));
+    REQUIRE(get_result.has_value());
+    REQUIRE(get_result->messages.size() > 0);
+    INFO("Prompt messages: " << get_result->messages.size());
+    
+    run_void_with_timeout(io, client.disconnect());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Resources Test
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Everything server - resources", "[everything][resources]") {
+    asio::io_context io;
+    
+    AsyncProcessConfig config;
+    config.command = "mcp-server-everything";
+    config.args = {};
+    config.use_content_length_framing = false;
+    
+    auto transport = std::make_unique<AsyncProcessTransport>(io.get_executor(), config);
+    auto roots_handler = std::make_shared<StaticRootsHandler>(std::vector<Root>{});
+    
+    AsyncMcpClientConfig client_config;
+    client_config.auto_initialize = true;
+    client_config.client_name = "mcpp-resources-test";
+    client_config.client_version = "1.0.0";
+    client_config.capabilities.roots = ClientCapabilities::Roots{};
+    client_config.request_timeout = std::chrono::seconds(10);
+    
+    AsyncMcpClient client(std::move(transport), client_config);
+    client.set_roots_handler(roots_handler);
+    
+    auto connect_result = run_with_timeout(io, client.connect());
+    REQUIRE(connect_result.has_value());
+    
+    // List resources
+    auto resources_result = run_with_timeout(io, client.list_resources());
+    REQUIRE(resources_result.has_value());
+    REQUIRE(resources_result->resources.size() >= 10);
+    INFO("Resources count: " << resources_result->resources.size());
+    
+    // Read a resource
+    if (!resources_result->resources.empty()) {
+        const auto& first_resource = resources_result->resources[0];
+        INFO("Reading resource: " << first_resource.uri);
+        
+        auto read_result = run_with_timeout(io, client.read_resource(first_resource.uri));
+        REQUIRE(read_result.has_value());
+        REQUIRE(read_result->contents.size() > 0);
+    }
+    
+    // List resource templates
+    auto templates_result = run_with_timeout(io, client.list_resource_templates());
+    INFO("Resource templates: " << (templates_result.has_value() ? std::to_string(templates_result->resource_templates.size()) : templates_result.error().message));
+    
+    run_void_with_timeout(io, client.disconnect());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Elicitation Test (if supported)
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Everything server - elicitation check", "[everything][elicitation][!mayfail]") {
+    // Note: Everything server may not support elicitation
+    // This test checks if the capability is advertised and handler is set up
+    
+    asio::io_context io;
+    
+    AsyncProcessConfig config;
+    config.command = "mcp-server-everything";
+    config.args = {};
+    config.use_content_length_framing = false;
+    
+    auto transport = std::make_unique<AsyncProcessTransport>(io.get_executor(), config);
+    
+    class TestElicitationHandler : public IElicitationHandler {
+    public:
+        std::atomic<int> call_count{0};
+        
+        ElicitationResult handle_form(
+            const std::string& message,
+            const Json& schema
+        ) override {
+            call_count++;
+            (void)message;
+            (void)schema;
+            return {ElicitationAction::Accept, Json{{"response", "test"}}};
+        }
+        
+        ElicitationResult handle_url(
+            const std::string& elicitation_id,
+            const std::string& url,
+            const std::string& message
+        ) override {
+            call_count++;
+            (void)elicitation_id;
+            (void)url;
+            (void)message;
+            return {ElicitationAction::Opened, std::nullopt};
+        }
+    };
+    
+    auto elicitation_handler = std::make_shared<TestElicitationHandler>();
+    auto roots_handler = std::make_shared<StaticRootsHandler>(std::vector<Root>{});
+    
+    AsyncMcpClientConfig client_config;
+    client_config.auto_initialize = true;
+    client_config.client_name = "mcpp-elicitation-test";
+    client_config.client_version = "1.0.0";
+    client_config.capabilities.elicitation = ElicitationCapability{true, true};
+    client_config.capabilities.roots = ClientCapabilities::Roots{};
+    client_config.request_timeout = std::chrono::seconds(10);
+    
+    AsyncMcpClient client(std::move(transport), client_config);
+    client.set_elicitation_handler(elicitation_handler);
+    client.set_roots_handler(roots_handler);
+    
+    auto connect_result = run_with_timeout(io, client.connect());
+    REQUIRE(connect_result.has_value());
+    
+    // List tools to see if there's an elicitation-triggering tool
+    auto tools_result = run_with_timeout(io, client.list_tools());
+    REQUIRE(tools_result.has_value());
+    
+    bool found_elicit_tool = false;
+    for (const auto& tool : tools_result->tools) {
+        if (tool.name.find("elicit") != std::string::npos) {
+            found_elicit_tool = true;
+            INFO("Found elicitation tool: " << tool.name);
+        }
+    }
+    
+    INFO("Server has elicitation tool: " << found_elicit_tool);
+    INFO("Elicitation handler call count: " << elicitation_handler->call_count.load());
+    
+    run_void_with_timeout(io, client.disconnect());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Progress Notifications Test
 // ═══════════════════════════════════════════════════════════════════════════
 

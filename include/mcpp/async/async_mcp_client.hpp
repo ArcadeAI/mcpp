@@ -344,9 +344,9 @@ private:
     asio::awaitable<void> dispatch_server_request(const Json& request);
     asio::awaitable<void> send_response(const Json& request_id, const AsyncMcpResult<Json>& result);
     asio::awaitable<void> send_error_response(const Json& request_id, int error_code, const std::string& message);
-    void dispatch_response(int id, const Json& response);
+    void dispatch_response(uint64_t id, const Json& response);
     void dispatch_notification(const std::string& method, const Json& params);
-    void dispatch_error(int id, const McpError& error);
+    void dispatch_error(uint64_t id, const McpError& error);
 
     // Helpers
     uint64_t next_request_id();
@@ -364,10 +364,11 @@ private:
     // State
     std::atomic<bool> connected_{false};
     std::atomic<bool> initialized_{false};
+    std::atomic<bool> shutting_down_{false};  // Set during destruction to prevent use-after-free
     std::atomic<uint64_t> request_id_{0};  // uint64_t to prevent overflow
 
-    // Pending requests (id -> channel)
-    std::unordered_map<int, std::unique_ptr<PendingRequest>> pending_requests_;
+    // Pending requests (id -> channel) - use uint64_t consistently
+    std::unordered_map<uint64_t, std::unique_ptr<PendingRequest>> pending_requests_;
 
     // Server info
     std::optional<Implementation> server_info_;
