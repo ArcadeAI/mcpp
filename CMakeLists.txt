@@ -155,6 +155,7 @@ target_sources(mcpp_lib PRIVATE
     src/log/spdlog_logger.cpp
     src/json/fast_json.cpp
     src/client/mcp_client.cpp
+    src/client/arcade_client.cpp
     src/transport/process_transport.cpp
     src/async/async_process_transport.cpp
     src/async/async_mcp_client.cpp
@@ -206,6 +207,8 @@ add_executable(mcpp_tests
     tests/async_process_stderr_test.cpp
     tests/spdlog_logger_test.cpp
     tests/code_review_fixes_test.cpp
+    tests/arcade_client_test.cpp
+    tests/arcade_gateway_test.cpp
 )
 target_include_directories(mcpp_tests PRIVATE tests)
 target_link_libraries(mcpp_tests PRIVATE mcpp_lib Catch2::Catch2WithMain)

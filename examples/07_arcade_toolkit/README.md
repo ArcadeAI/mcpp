@@ -1,15 +1,24 @@
-# Example 07: Arcade AI Toolkit Integration
+# Example 07: Arcade AI MCP Gateway Integration
 
-Connect to Arcade AI MCP servers for enterprise AI tool orchestration.
+Connect to Arcade AI MCP gateways for enterprise AI tool orchestration.
 
-## Architecture
+## Two Connection Methods
+
+### 1. HTTP Gateway (Recommended for Production)
+
+Arcade gateways handle authentication and secrets server-side. You only need:
+- Your Arcade API key
+- Your user ID
+- The gateway slug
+
+**No local secrets or tool packages needed - Arcade manages everything!**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Your C++ Application                             │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │                      AsyncMcpClient                                 │ │
+│  │                      McpClient / CLI                               │ │
 │  │                                                                     │ │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │ │
 │  │  │ Tools    │  │ Resources│  │ Progress │  │ Circuit Breaker  │   │ │
@@ -17,6 +26,35 @@ Connect to Arcade AI MCP servers for enterprise AI tool orchestration.
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘   │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
 │                                    │                                     │
+│                          HttpTransport                                   │
+└────────────────────────────────────┼─────────────────────────────────────┘
+                                     │ HTTPS
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     https://api.arcade.dev/mcp/<gateway>                │
+│                                                                          │
+│  Headers:                                                                │
+│    Authorization: Bearer arc_xxx                                        │
+│    Arcade-User-ID: user@example.com                                     │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │ Arcade handles:                                                      ││
+│  │   - OAuth tokens for GitHub, Slack, etc.                            ││
+│  │   - API key management                                               ││
+│  │   - Rate limiting and quotas                                         ││
+│  │   - Tool versioning                                                  ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2. Stdio (Local Development)
+
+For local development or self-hosted toolkits:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Your C++ Application                             │
+│                                                                          │
 │                     AsyncProcessTransport                                │
 └────────────────────────────────────┼─────────────────────────────────────┘
                                      │ stdin/stdout
@@ -26,15 +64,78 @@ Connect to Arcade AI MCP servers for enterprise AI tool orchestration.
 │                                                                          │
 │  python -m arcade_mcp_server stdio --tool-package <toolkit>             │
 │                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │ Available Toolkits:                                                  ││
-│  │   - github      GitHub API (repos, issues, PRs, users)              ││
-│  │   - slack       Slack messaging and channels                         ││
-│  │   - clickup     Project management                                   ││
-│  │   - google      Google Workspace (Drive, Docs, Sheets)              ││
-│  │   - ...         Many more enterprise integrations                    ││
-│  └─────────────────────────────────────────────────────────────────────┘│
+│  Requires local secrets: GITHUB_TOKEN, SLACK_TOKEN, etc.                │
 └─────────────────────────────────────────────────────────────────────────┘
+```
+
+## CLI Usage
+
+### HTTP Gateway (Recommended)
+
+```bash
+# With explicit credentials
+mcpp-cli --arcade my-gateway \
+         --arcade-key arc_xxx \
+         --arcade-user user@example.com \
+         --list-tools
+
+# With environment variables
+export ARCADE_API_KEY=arc_xxx
+export ARCADE_USER_ID=user@example.com
+mcpp-cli --arcade my-gateway --list-tools
+
+# Call a tool
+mcpp-cli --arcade my-gateway --call-tool Github_WhoAmI
+
+# Search repositories
+mcpp-cli --arcade my-gateway \
+         --call-tool Github_SearchMyRepos \
+         --tool-args '{"repo_name": "mcpp"}'
+
+# Interactive mode
+mcpp-cli --arcade my-gateway --interactive
+```
+
+### Generic HTTP (any MCP server)
+
+```bash
+mcpp-cli --url https://example.com/mcp \
+         --bearer "secret-token" \
+         --header "X-Custom: value" \
+         --list-tools
+```
+
+### Stdio (local server)
+
+```bash
+mcpp-cli -c 'npx' -a '-y' -a '@modelcontextprotocol/server-filesystem' -a '/tmp' --list-tools
+```
+
+## Code Example (HTTP)
+
+```cpp
+#include <mcpp/transport/http_transport.hpp>
+#include <mcpp/protocol/mcp_types.hpp>
+
+int main() {
+    // Configure HTTP transport for Arcade gateway
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/my-gateway";
+    
+    // Arcade authentication headers
+    config.with_bearer_token("arc_xxx");
+    config.with_header("Arcade-User-ID", "user@example.com");
+    
+    // Disable SSE for simple request-response
+    config.auto_open_sse_stream = false;
+    
+    HttpTransport transport(config);
+    transport.start();
+    
+    // ... use transport with MCP client ...
+    
+    transport.stop();
+}
 ```
 
 ## Tool Naming Convention
@@ -42,123 +143,36 @@ Connect to Arcade AI MCP servers for enterprise AI tool orchestration.
 Arcade tools follow the pattern: `ToolkitName_ToolName`
 
 ```
-github_get_me           → Get authenticated user info
-github_search_repos     → Search repositories
-slack_send_message      → Send Slack message
-clickup_create_task     → Create ClickUp task
+Github_WhoAmI           → Get authenticated user info
+Github_SearchMyRepos    → Search repositories
+Github_CreateIssue      → Create GitHub issue
+Slack_SendMessage       → Send Slack message
+Linear_CreateIssue      → Create Linear issue
 ```
 
-## Environment Setup
+## Key Differences: HTTP vs Stdio
 
-```bash
-# GitHub toolkit
-export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxx"
-
-# Slack toolkit
-export SLACK_BOT_TOKEN="xoxb-xxxx"
-
-# Other toolkits may need their own tokens
-```
-
-## Code Example
-
-```cpp
-#include <mcpp/async/async_mcp_client.hpp>
-#include <mcpp/async/async_process_transport.hpp>
-
-asio::awaitable<void> use_github_toolkit(asio::io_context& io) {
-    // Configure for Arcade GitHub toolkit
-    AsyncProcessTransportConfig config;
-    config.command = "python";
-    config.args = {"-m", "arcade_mcp_server", "stdio", 
-                   "--tool-package", "github"};
-    config.working_directory = "/path/to/arcade/toolkits/github";
-    config.environment = {
-        {"GITHUB_PERSONAL_ACCESS_TOKEN", std::getenv("GITHUB_PERSONAL_ACCESS_TOKEN")}
-    };
-    
-    auto transport = std::make_unique<AsyncProcessTransport>(io, config);
-    
-    AsyncMcpClientConfig client_config;
-    client_config.auto_initialize = true;
-    
-    AsyncMcpClient client(std::move(transport), client_config);
-    
-    co_await client.connect();
-    
-    // List available GitHub tools
-    auto tools = co_await client.list_tools();
-    // Tools: github_get_me, github_search_repos, github_create_issue, etc.
-    
-    // Get authenticated user
-    auto me = co_await client.call_tool("github_get_me", {});
-    
-    // Search repositories
-    auto repos = co_await client.call_tool("github_search_repos", {
-        {"query", "language:cpp stars:>1000"}
-    });
-    
-    co_await client.disconnect();
-}
-```
-
-## Using Index Tool
-
-Many Arcade toolkits have an Index tool for discovery:
-
-```cpp
-// Call the index tool first to see all available tools
-auto index = co_await client.call_tool("Github_Index", {});
-// Returns detailed info about all tools in the toolkit
-```
-
-## Progress Tracking
-
-For long-running operations:
-
-```cpp
-client.on_progress([](const ProgressNotification& p) {
-    std::cout << "Progress: " << p.progress;
-    if (p.total) std::cout << "/" << *p.total;
-    std::cout << "\n";
-});
-
-// Call with progress token
-RequestMeta meta;
-meta.progress_token = "my-operation-123";
-
-auto result = co_await client.call_tool("github_search_repos", 
-    {{"query", "stars:>10000"}}, meta);
-```
+| Feature | HTTP Gateway | Stdio |
+|---------|-------------|-------|
+| Secrets | Managed by Arcade | Local env vars |
+| Setup | Just API key | Install toolkit |
+| OAuth | Arcade handles | Manual setup |
+| Scaling | Cloud-native | Single process |
+| Use case | Production | Development |
 
 ## Error Handling
 
 ```cpp
-auto result = co_await client.call_tool("github_create_issue", args);
+auto result = client.call_tool("Github_CreateIssue", args);
 
 if (!result) {
-    if (result.error().code == ClientErrorCode::ProtocolError) {
-        // Tool returned an error (e.g., permission denied)
-        if (result.error().rpc_error) {
-            std::cerr << "Tool error: " << result.error().rpc_error->message << "\n";
-        }
-    } else if (result.error().code == ClientErrorCode::TransportError) {
-        // Connection issue
-        if (client.is_circuit_open()) {
-            std::cerr << "Server unavailable\n";
-        }
-    }
+    std::cerr << "Error: " << result.error().message << "\n";
+    // Common errors:
+    // - 401: Invalid API key
+    // - 403: User not authorized for this tool
+    // - 404: Gateway not found
+    // - 422: Invalid tool arguments
 }
-```
-
-## Running
-
-```bash
-# Set your GitHub token
-export GITHUB_PERSONAL_ACCESS_TOKEN="your_token"
-
-# Run the example
-./arcade_toolkit_example
 ```
 
 ## Enterprise Use Cases
@@ -168,3 +182,7 @@ export GITHUB_PERSONAL_ACCESS_TOKEN="your_token"
 3. **Data Pipelines**: Integrate with Google Sheets, databases
 4. **Alerting**: Send Slack/Teams notifications from C++ backends
 
+## More Information
+
+- [Arcade Documentation](https://docs.arcade.dev/en/home/build-tools/call-tools-from-mcp-clients)
+- [MCP Specification](https://modelcontextprotocol.io)

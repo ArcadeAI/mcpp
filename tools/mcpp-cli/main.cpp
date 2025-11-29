@@ -4,12 +4,22 @@
 // A command-line interface for testing and interacting with MCP servers.
 //
 // Usage:
+//   # Stdio transport (local server)
 //   mcpp-cli --command "npx -y @modelcontextprotocol/server-filesystem /tmp"
 //   mcpp-cli --command "python mcp_server.py" --list-tools
-//   mcpp-cli --command "node server.js" --call-tool read_file --args '{"path":"/tmp/test.txt"}'
+//
+//   # HTTP transport (remote server / Arcade gateway)
+//   mcpp-cli --url "https://api.arcade.dev/mcp/my-gateway" \
+//            --header "Authorization: Bearer arc_xxx" \
+//            --header "Arcade-User-ID: user@example.com" \
+//            --list-tools
+//
+//   # Arcade shorthand
+//   mcpp-cli --arcade my-gateway --arcade-key arc_xxx --arcade-user user@example.com
 //
 // Features:
-//   - Connect to any MCP server via stdio transport
+//   - Connect to any MCP server via stdio or HTTP transport
+//   - Native Arcade AI gateway support with --arcade flag
 //   - List tools, resources, prompts, and resource templates
 //   - Call tools with JSON arguments
 //   - Read resources by URI
@@ -20,6 +30,7 @@
 #include <nlohmann/json.hpp>
 
 #include "mcpp/transport/process_transport.hpp"
+#include "mcpp/transport/http_transport.hpp"
 #include "mcpp/protocol/mcp_types.hpp"
 
 #include <iostream>
@@ -29,6 +40,8 @@
 #include <optional>
 #include <chrono>
 #include <thread>
+#include <memory>
+#include <cstdlib>
 
 using namespace mcpp;
 using Json = nlohmann::json;
@@ -56,12 +69,105 @@ namespace color {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Transport Interface
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Unified interface for both stdio and HTTP transports
+class ICliTransport {
+public:
+    virtual ~ICliTransport() = default;
+    virtual TransportResult<void> send(const Json& message) = 0;
+    virtual TransportResult<Json> receive() = 0;
+    virtual TransportResult<void> start() = 0;
+    virtual void stop() = 0;
+};
+
+// Wrapper for ProcessTransport (stdio)
+class StdioCliTransport : public ICliTransport {
+public:
+    explicit StdioCliTransport(ProcessTransportConfig config)
+        : transport_(config)
+    {}
+    
+    TransportResult<void> send(const Json& message) override {
+        return transport_.send(message);
+    }
+    
+    TransportResult<Json> receive() override {
+        return transport_.receive();
+    }
+    
+    TransportResult<void> start() override {
+        return transport_.start();
+    }
+    
+    void stop() override {
+        transport_.stop();
+    }
+    
+private:
+    ProcessTransport transport_;
+};
+
+// Wrapper for HttpTransport
+class HttpCliTransport : public ICliTransport {
+public:
+    explicit HttpCliTransport(HttpTransportConfig config)
+        : transport_(config)
+    {}
+    
+    TransportResult<void> send(const Json& message) override {
+        auto result = transport_.send(message);
+        if (!result) {
+            return tl::unexpected(TransportError{
+                TransportError::Category::Network,
+                result.error().message,
+                std::nullopt
+            });
+        }
+        return {};
+    }
+    
+    TransportResult<Json> receive() override {
+        auto result = transport_.receive();
+        if (!result) {
+            return tl::unexpected(TransportError{
+                TransportError::Category::Network,
+                result.error().message,
+                std::nullopt
+            });
+        }
+        return *result;
+    }
+    
+    TransportResult<void> start() override {
+        try {
+            transport_.start();
+            return {};
+        } catch (const std::exception& e) {
+            return tl::unexpected(TransportError{
+                TransportError::Category::Network,
+                std::string("Failed to start HTTP transport: ") + e.what(),
+                std::nullopt
+            });
+        }
+    }
+    
+    void stop() override {
+        transport_.stop();
+    }
+    
+private:
+    HttpTransport transport_;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Simple MCP Client (reused from tests)
 // ═══════════════════════════════════════════════════════════════════════════
 
 class CliMcpClient {
 public:
-    explicit CliMcpClient(ProcessTransport& transport)
+    explicit CliMcpClient(ICliTransport& transport)
         : transport_(transport)
     {}
 
@@ -132,7 +238,7 @@ public:
     }
 
 private:
-    ProcessTransport& transport_;
+    ICliTransport& transport_;
     int request_id_ = 0;
 };
 
@@ -595,6 +701,32 @@ int run_repl(CliMcpClient& client, const InitializeResult& init_result) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Helper Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Parse header string "Name: Value" into pair
+std::pair<std::string, std::string> parse_header(const std::string& header) {
+    auto colon_pos = header.find(':');
+    if (colon_pos == std::string::npos) {
+        return {header, ""};
+    }
+    std::string name = header.substr(0, colon_pos);
+    std::string value = header.substr(colon_pos + 1);
+    // Trim leading whitespace from value
+    auto start = value.find_first_not_of(" \t");
+    if (start != std::string::npos) {
+        value = value.substr(start);
+    }
+    return {name, value};
+}
+
+// Get environment variable with fallback
+std::string get_env(const char* name, const std::string& fallback = "") {
+    const char* value = std::getenv(name);
+    return value ? value : fallback;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -602,8 +734,21 @@ int main(int argc, char* argv[]) {
     cxxopts::Options options("mcpp-cli", "MCP Server Testing Tool");
     
     options.add_options()
-        ("c,command", "Server command to execute", cxxopts::value<std::string>())
+        // Stdio transport options
+        ("c,command", "Server command to execute (stdio transport)", cxxopts::value<std::string>())
         ("a,args", "Arguments for the server command", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        
+        // HTTP transport options
+        ("u,url", "MCP server URL (HTTP transport)", cxxopts::value<std::string>())
+        ("H,header", "HTTP header (can be repeated, format: 'Name: Value')", cxxopts::value<std::vector<std::string>>()->default_value(""))
+        ("bearer", "Bearer token for Authorization header", cxxopts::value<std::string>())
+        
+        // Arcade AI shortcuts
+        ("arcade", "Arcade gateway slug (shortcut for --url https://api.arcade.dev/mcp/<slug>)", cxxopts::value<std::string>())
+        ("arcade-key", "Arcade API key (or use ARCADE_API_KEY env var)", cxxopts::value<std::string>())
+        ("arcade-user", "Arcade user ID (or use ARCADE_USER_ID env var)", cxxopts::value<std::string>())
+        
+        // Commands
         ("list-tools", "List available tools")
         ("list-resources", "List available resources")
         ("list-prompts", "List available prompts")
@@ -614,9 +759,12 @@ int main(int argc, char* argv[]) {
         ("ping", "Ping the server")
         ("info", "Show server info")
         ("i,interactive", "Start interactive REPL mode")
+        
+        // Output options
         ("j,json", "Output results as JSON")
         ("no-color", "Disable colored output")
-        ("content-length", "Use Content-Length framing (default: raw JSON)")
+        ("content-length", "Use Content-Length framing for stdio (default: raw JSON)")
+        ("v,verbose", "Enable verbose logging")
         ("h,help", "Print usage");
 
     try {
@@ -624,17 +772,21 @@ int main(int argc, char* argv[]) {
 
         if (result.count("help")) {
             std::cout << options.help() << "\n";
-            std::cout << "Examples:\n";
-            std::cout << "  mcpp-cli -c 'npx' -a '-y' -a '@modelcontextprotocol/server-filesystem' -a '/tmp' --list-tools\n";
-            std::cout << "  mcpp-cli -c 'python' -a 'server.py' --call-tool read_file --tool-args '{\"path\":\"/tmp/test.txt\"}'\n";
-            std::cout << "  mcpp-cli -c 'node' -a 'server.js' --interactive\n";
+            std::cout << "Examples:\n\n";
+            std::cout << color::c(color::bold) << "  Stdio Transport (local servers):\n" << color::c(color::reset);
+            std::cout << "    mcpp-cli -c 'npx' -a '-y' -a '@modelcontextprotocol/server-filesystem' -a '/tmp' --list-tools\n";
+            std::cout << "    mcpp-cli -c 'python' -a 'server.py' --call-tool read_file --tool-args '{\"path\":\"/tmp/test.txt\"}'\n";
+            std::cout << "    mcpp-cli -c 'node' -a 'server.js' --interactive\n\n";
+            std::cout << color::c(color::bold) << "  HTTP Transport (remote servers):\n" << color::c(color::reset);
+            std::cout << "    mcpp-cli --url 'https://example.com/mcp' --bearer 'secret' --list-tools\n";
+            std::cout << "    mcpp-cli -u 'https://api.example.com/mcp' -H 'X-Custom: value' --info\n\n";
+            std::cout << color::c(color::bold) << "  Arcade AI Gateway:\n" << color::c(color::reset);
+            std::cout << "    mcpp-cli --arcade my-gateway --arcade-key arc_xxx --arcade-user user@example.com --list-tools\n";
+            std::cout << "    mcpp-cli --arcade my-gateway --call-tool Github_GetMe\n";
+            std::cout << "    # Or with environment variables:\n";
+            std::cout << "    export ARCADE_API_KEY=arc_xxx ARCADE_USER_ID=user@example.com\n";
+            std::cout << "    mcpp-cli --arcade my-gateway --list-tools\n";
             return 0;
-        }
-
-        if (!result.count("command")) {
-            print_error("Missing required --command option");
-            std::cout << options.help() << "\n";
-            return 1;
         }
 
         // Setup
@@ -642,30 +794,111 @@ int main(int argc, char* argv[]) {
         bool json_output = result.count("json") > 0;
         bool use_content_length = result.count("content-length") > 0;
 
-        // Create transport
-        ProcessTransportConfig config;
-        config.command = result["command"].as<std::string>();
-        config.args = result["args"].as<std::vector<std::string>>();
-        config.use_content_length_framing = use_content_length;
+        // Determine transport type and create appropriate transport
+        std::unique_ptr<ICliTransport> transport;
+        
+        bool use_http = result.count("url") > 0 || result.count("arcade") > 0;
+        bool use_stdio = result.count("command") > 0;
+        
+        if (use_http && use_stdio) {
+            print_error("Cannot use both --command (stdio) and --url/--arcade (HTTP) at the same time");
+            return 1;
+        }
+        
+        if (!use_http && !use_stdio) {
+            print_error("Must specify either --command (stdio) or --url/--arcade (HTTP)");
+            std::cout << "\n" << options.help() << "\n";
+            return 1;
+        }
+        
+        if (use_http) {
+            // HTTP Transport
+            HttpTransportConfig config;
+            
+            // Build URL
+            if (result.count("arcade")) {
+                std::string gateway_slug = result["arcade"].as<std::string>();
+                config.base_url = "https://api.arcade.dev/mcp/" + gateway_slug;
+                
+                // Get Arcade credentials
+                std::string api_key = result.count("arcade-key") 
+                    ? result["arcade-key"].as<std::string>()
+                    : get_env("ARCADE_API_KEY");
+                    
+                std::string user_id = result.count("arcade-user")
+                    ? result["arcade-user"].as<std::string>()
+                    : get_env("ARCADE_USER_ID");
+                
+                if (api_key.empty()) {
+                    print_error("Arcade API key required. Use --arcade-key or set ARCADE_API_KEY environment variable");
+                    return 1;
+                }
+                
+                if (user_id.empty()) {
+                    print_error("Arcade user ID required. Use --arcade-user or set ARCADE_USER_ID environment variable");
+                    return 1;
+                }
+                
+                // Set Arcade headers
+                config.with_bearer_token(api_key);
+                config.with_header("Arcade-User-ID", user_id);
+                
+                if (!json_output) {
+                    std::cout << color::c(color::dim) << "Connecting to Arcade gateway: " 
+                              << gateway_slug << color::c(color::reset) << "\n";
+                }
+            } else {
+                config.base_url = result["url"].as<std::string>();
+            }
+            
+            // Add bearer token if provided
+            if (result.count("bearer")) {
+                config.with_bearer_token(result["bearer"].as<std::string>());
+            }
+            
+            // Add custom headers
+            auto headers = result["header"].as<std::vector<std::string>>();
+            for (const auto& header : headers) {
+                if (!header.empty()) {
+                    auto [name, value] = parse_header(header);
+                    config.with_header(name, value);
+                }
+            }
+            
+            // Disable SSE stream for simple request-response
+            config.auto_open_sse_stream = false;
+            
+            transport = std::make_unique<HttpCliTransport>(config);
+            
+        } else {
+            // Stdio Transport
+            ProcessTransportConfig config;
+            config.command = result["command"].as<std::string>();
+            config.args = result["args"].as<std::vector<std::string>>();
+            config.use_content_length_framing = use_content_length;
+            config.skip_command_validation = true;  // CLI user controls the command
+            
+            transport = std::make_unique<StdioCliTransport>(config);
+        }
 
-        ProcessTransport transport(config);
-
-        auto start_result = transport.start();
+        auto start_result = transport->start();
         if (!start_result) {
-            print_error("Failed to start server: " + start_result.error().message);
+            print_error("Failed to start transport: " + start_result.error().message);
             return 1;
         }
 
-        // Give the server a moment to start
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Give stdio servers a moment to start
+        if (use_stdio) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
-        CliMcpClient client(transport);
+        CliMcpClient client(*transport);
 
         // Initialize
         auto init_result = client.initialize();
         if (!init_result) {
             print_error("Failed to initialize: " + init_result.error().message);
-            transport.stop();
+            transport->stop();
             return 1;
         }
 
@@ -698,7 +931,7 @@ int main(int argc, char* argv[]) {
             exit_code = cmd_info(client, *init_result, json_output);
         }
 
-        transport.stop();
+        transport->stop();
         return exit_code;
 
     } catch (const cxxopts::exceptions::exception& e) {

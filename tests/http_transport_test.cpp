@@ -751,3 +751,193 @@ TEST_CASE("HttpTransport session state transitions correctly during reconnection
     
     transport->stop();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Custom Headers and Authentication Tests (for Arcade integration)
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("HttpTransportConfig with_bearer_token sets Authorization header", "[http][transport][config][auth]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/my-gateway";
+    config.auto_open_sse_stream = false;
+    config.with_bearer_token("arc_test_token_12345");
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    auto headers = mock_raw->default_headers();
+    REQUIRE(headers.count("Authorization") == 1);
+    REQUIRE(headers.at("Authorization") == "Bearer arc_test_token_12345");
+}
+
+TEST_CASE("HttpTransportConfig with_header adds custom header", "[http][transport][config][headers]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/my-gateway";
+    config.auto_open_sse_stream = false;
+    config.with_header("Arcade-User-ID", "user@example.com");
+    config.with_header("X-Custom-Header", "custom-value");
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    auto headers = mock_raw->default_headers();
+    REQUIRE(headers.count("Arcade-User-ID") == 1);
+    REQUIRE(headers.at("Arcade-User-ID") == "user@example.com");
+    REQUIRE(headers.count("X-Custom-Header") == 1);
+    REQUIRE(headers.at("X-Custom-Header") == "custom-value");
+}
+
+TEST_CASE("HttpTransportConfig builder methods chain correctly", "[http][transport][config][builder]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/ultracoolserver";
+    config.auto_open_sse_stream = false;
+    
+    // Chain multiple builder methods
+    config.with_bearer_token("arc_xxx")
+          .with_header("Arcade-User-ID", "francisco@arcade.dev")
+          .with_connect_timeout(std::chrono::milliseconds{5000})
+          .with_read_timeout(std::chrono::milliseconds{30000})
+          .with_max_retries(5);
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    auto headers = mock_raw->default_headers();
+    REQUIRE(headers.count("Authorization") == 1);
+    REQUIRE(headers.at("Authorization") == "Bearer arc_xxx");
+    REQUIRE(headers.count("Arcade-User-ID") == 1);
+    REQUIRE(headers.at("Arcade-User-ID") == "francisco@arcade.dev");
+    REQUIRE(mock_raw->connect_timeout() == std::chrono::milliseconds{5000});
+    REQUIRE(mock_raw->read_timeout() == std::chrono::milliseconds{30000});
+}
+
+TEST_CASE("HttpTransport sends custom headers with requests", "[http][transport][headers][request]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/my-gateway";
+    config.auto_open_sse_stream = false;
+    config.with_bearer_token("arc_token")
+          .with_header("Arcade-User-ID", "test@example.com");
+    
+    mock_raw->queue_json_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})");
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    transport.start();
+    
+    Json message = {
+        {"jsonrpc", "2.0"},
+        {"id", 1},
+        {"method", "tools/list"}
+    };
+    
+    auto result = transport.send(message);
+    REQUIRE(result.has_value());
+    
+    // Verify headers were sent
+    // Note: Default headers are set on client and automatically included
+    auto default_headers = mock_raw->default_headers();
+    REQUIRE(default_headers.count("Authorization") == 1);
+    REQUIRE(default_headers.at("Authorization") == "Bearer arc_token");
+    REQUIRE(default_headers.count("Arcade-User-ID") == 1);
+    
+    transport.stop();
+}
+
+TEST_CASE("HttpTransport works with Arcade-style URL", "[http][transport][arcade]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/ultracoolserver";
+    config.auto_open_sse_stream = false;
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    // Base URL includes default HTTPS port
+    REQUIRE(mock_raw->base_url() == "https://api.arcade.dev:443");
+    
+    // Verify path extraction
+    mock_raw->queue_json_response(200, R"({})");
+    transport.start();
+    transport.send({{"method", "test"}});
+    
+    auto req = mock_raw->last_request();
+    REQUIRE(req.has_value());
+    REQUIRE(req->path == "/mcp/ultracoolserver");
+    
+    transport.stop();
+}
+
+TEST_CASE("HttpTransport handles multiple custom headers", "[http][transport][headers][multiple]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://example.com/mcp";
+    config.auto_open_sse_stream = false;
+    config.default_headers = {
+        {"Authorization", "Bearer token123"},
+        {"X-Custom-1", "value1"},
+        {"X-Custom-2", "value2"},
+        {"X-Custom-3", "value3"},
+        {"User-Agent", "mcpp/1.0"}
+    };
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    auto headers = mock_raw->default_headers();
+    REQUIRE(headers.size() == 5);
+    REQUIRE(headers.at("Authorization") == "Bearer token123");
+    REQUIRE(headers.at("X-Custom-1") == "value1");
+    REQUIRE(headers.at("X-Custom-2") == "value2");
+    REQUIRE(headers.at("X-Custom-3") == "value3");
+    REQUIRE(headers.at("User-Agent") == "mcpp/1.0");
+}
+
+TEST_CASE("HttpTransport stop/start cycle preserves config but resets state", "[http][transport][lifecycle][restart]") {
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.arcade.dev/mcp/test";
+    config.auto_open_sse_stream = false;
+    config.with_bearer_token("arc_xxx")
+          .with_header("Arcade-User-ID", "user@test.com");
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    
+    // First session
+    mock_raw->queue_response_with_session(200, R"({})", "session-1");
+    transport.start();
+    transport.send({{"method", "init"}});
+    REQUIRE(transport.session_id() == "session-1");
+    transport.stop();
+    
+    // Reset mock state
+    mock_raw->reset();
+    
+    // Second session - should get new session ID
+    mock_raw->queue_response_with_session(200, R"({})", "session-2");
+    transport.start();
+    
+    // Session should be cleared after restart
+    REQUIRE(transport.session_id().has_value() == false);
+    
+    transport.send({{"method", "init"}});
+    REQUIRE(transport.session_id() == "session-2");
+    
+    // Config headers should still be there
+    auto headers = mock_raw->default_headers();
+    REQUIRE(headers.at("Authorization") == "Bearer arc_xxx");
+    REQUIRE(headers.at("Arcade-User-ID") == "user@test.com");
+    
+    transport.stop();
+}
