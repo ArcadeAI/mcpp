@@ -1625,3 +1625,58 @@ TEST_CASE("HTTP Transport - GitHub Copilot MCP call tool", "[real][http][github-
     transport.stop();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ProcessTransport Stderr Capture Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Real server: ProcessTransport stderr capture with real process", "[real][process][stderr]") {
+    // This test uses a real shell command to verify stderr capture works end-to-end
+    ProcessTransportConfig config;
+    config.command = "sh";
+    config.args = {"-c", "echo 'stderr output' >&2 && echo 'stdout output'"};
+    config.stderr_handling = mcpp::StderrHandling::Capture;
+    config.skip_command_validation = true;
+    config.use_content_length_framing = false;  // Simple line-based output
+    
+    ProcessTransport transport(config);
+    
+    auto start_result = transport.start();
+    REQUIRE(start_result.has_value());
+    
+    // Give the process time to produce output
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Check stderr was captured
+    std::string stderr_output = transport.read_stderr();
+    INFO("Captured stderr: " << stderr_output);
+    REQUIRE(stderr_output.find("stderr output") != std::string::npos);
+    
+    transport.stop();
+}
+
+TEST_CASE("Real server: ProcessTransport stderr callback with real process", "[real][process][stderr]") {
+    std::string captured;
+    
+    ProcessTransportConfig config;
+    config.command = "sh";
+    config.args = {"-c", "echo 'callback test' >&2"};
+    config.stderr_handling = mcpp::StderrHandling::Capture;
+    config.skip_command_validation = true;
+    config.stderr_callback = [&captured](std::string_view data) {
+        captured += data;
+    };
+    
+    ProcessTransport transport(config);
+    
+    auto start_result = transport.start();
+    REQUIRE(start_result.has_value());
+    
+    // Give the process time to produce output
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    INFO("Callback captured: " << captured);
+    REQUIRE(captured.find("callback test") != std::string::npos);
+    
+    transport.stop();
+}
+

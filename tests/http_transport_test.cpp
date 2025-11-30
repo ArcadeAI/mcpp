@@ -94,7 +94,7 @@ TEST_CASE("HttpTransport::send posts JSON message", "[http][transport][send]") {
     
     mock->queue_json_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {
         {"jsonrpc", "2.0"},
@@ -124,7 +124,7 @@ TEST_CASE("HttpTransport::send handles 202 Accepted", "[http][transport][send]")
     
     mock->queue_response(202, "");  // No body for notifications
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json notification = {
         {"jsonrpc", "2.0"},
@@ -158,7 +158,7 @@ TEST_CASE("HttpTransport extracts session ID from response", "[http][transport][
     
     mock->queue_response_with_session(200, R"({"jsonrpc":"2.0","id":1,"result":{}})", "session-abc-123");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     REQUIRE(transport->session_id().has_value() == false);
     
@@ -180,7 +180,7 @@ TEST_CASE("HttpTransport includes session ID in subsequent requests", "[http][tr
     // Second response
     mock->queue_json_response(200, R"({"jsonrpc":"2.0","id":2,"result":{}})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // First request - no session yet
     Json msg1 = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
@@ -219,7 +219,7 @@ TEST_CASE("HttpTransport::send handles 404 as session expired when session exist
     mock->queue_response(404, "Not Found");
     mock->queue_response(404, "Not Found");  // Retry also fails
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // First request establishes session
     Json init_message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
@@ -242,7 +242,7 @@ TEST_CASE("HttpTransport::send handles 404 as HTTP error when no session", "[htt
     // 404 without a session should be a regular HTTP error
     mock->queue_response(404, "Not Found");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -263,7 +263,7 @@ TEST_CASE("HttpTransport::send handles HTTP 500 errors", "[http][transport][erro
     mock->queue_response(500, "Internal Server Error");
     mock->queue_response(500, "Internal Server Error");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -285,7 +285,7 @@ TEST_CASE("HttpTransport::send handles connection errors", "[http][transport][er
     mock->queue_connection_error("Connection refused");
     mock->queue_connection_error("Connection refused");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -305,7 +305,7 @@ TEST_CASE("HttpTransport::send handles timeout errors", "[http][transport][error
     mock->queue_timeout();
     mock->queue_timeout();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -321,7 +321,7 @@ TEST_CASE("HttpTransport::send handles SSL errors", "[http][transport][error]") 
     
     mock->queue_ssl_error("Certificate verification failed");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -336,16 +336,28 @@ TEST_CASE("HttpTransport::send handles SSL errors", "[http][transport][error]") 
 // Lifecycle Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("HttpTransport::start is idempotent", "[http][transport][lifecycle]") {
+TEST_CASE("HttpTransport::start returns success on first call", "[http][transport][lifecycle]") {
     auto [transport, mock] = make_test_transport();
     
     REQUIRE(transport->is_running() == false);
     
-    transport->start();
+    auto result = transport->start();
+    REQUIRE(result.has_value());
     REQUIRE(transport->is_running() == true);
     
-    transport->start();  // Second call should be no-op
+    transport->stop();
+}
+
+TEST_CASE("HttpTransport::start returns error when already running", "[http][transport][lifecycle]") {
+    auto [transport, mock] = make_test_transport();
+    
+    auto result1 = transport->start();
+    REQUIRE(result1.has_value());
     REQUIRE(transport->is_running() == true);
+    
+    auto result2 = transport->start();  // Second call should return error
+    REQUIRE(result2.has_value() == false);
+    REQUIRE(transport->is_running() == true);  // Still running
     
     transport->stop();
 }
@@ -353,7 +365,7 @@ TEST_CASE("HttpTransport::start is idempotent", "[http][transport][lifecycle]") 
 TEST_CASE("HttpTransport::stop is idempotent", "[http][transport][lifecycle]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     transport->stop();
     REQUIRE(transport->is_running() == false);
@@ -370,7 +382,7 @@ TEST_CASE("HttpTransport::stop sends DELETE when session exists", "[http][transp
     // DELETE response
     mock->queue_response(200, "");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Establish session
     Json msg = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
@@ -393,7 +405,7 @@ TEST_CASE("HttpTransport handles empty response body", "[http][transport][edge]"
     
     mock->queue_response(200, "");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -411,7 +423,7 @@ TEST_CASE("HttpTransport handles malformed JSON in response", "[http][transport]
     headers["Content-Type"] = "application/json";
     mock->queue_response(200, "not valid json {{{", headers);
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -434,7 +446,7 @@ TEST_CASE("HttpTransport handles malformed JSON in SSE events gracefully", "[htt
     
     mock->queue_sse_response(sse_body);
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result = transport->send(message);
@@ -461,7 +473,7 @@ TEST_CASE("HttpTransport handles URL with query parameters", "[http][transport][
     
     mock->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     transport->send(message);
@@ -476,7 +488,7 @@ TEST_CASE("HttpTransport handles URL with query parameters", "[http][transport][
 TEST_CASE("HttpTransport receive_with_timeout returns nullopt on timeout", "[http][transport][edge]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // No messages queued, should timeout quickly
     auto result = transport->receive_with_timeout(std::chrono::milliseconds{10});
@@ -497,7 +509,7 @@ TEST_CASE("HttpTransport exposes session state", "[http][transport][session]") {
     // Before start: Disconnected
     REQUIRE(transport->session_state() == SessionState::Disconnected);
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // After start: Connecting
     REQUIRE(transport->session_state() == SessionState::Connecting);
@@ -528,7 +540,7 @@ TEST_CASE("HttpTransport fires session state change callbacks", "[http][transpor
         state_changes.emplace_back(old_state, new_state);
     });
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     mock->queue_response_with_session(200, R"({"result":{}})", "session-abc");
     
@@ -549,7 +561,7 @@ TEST_CASE("HttpTransport fires session established callback", "[http][transport]
         established_session_id = id;
     });
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     mock->queue_response_with_session(200, R"({})", "my-session-id");
     
@@ -570,7 +582,7 @@ TEST_CASE("HttpTransport fires session lost callback on 404", "[http][transport]
         lost_reason = reason;
     });
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // First: establish session
     mock->queue_response_with_session(200, R"({})", "session-1");
@@ -598,7 +610,7 @@ TEST_CASE("HttpTransport fires session lost callback on 404", "[http][transport]
 TEST_CASE("HttpTransport handles connection failure during reconnection", "[http][transport][session]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Establish session
     mock->queue_response_with_session(200, R"({})", "session-1");
@@ -635,7 +647,7 @@ TEST_CASE("HttpTransport reconnects after session expiry with new session", "[ht
         ++session_lost_count;
     });
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Establish initial session
     mock->queue_response_with_session(200, R"({"result": "ok"})", "session-initial");
@@ -660,7 +672,7 @@ TEST_CASE("HttpTransport reconnects after session expiry with new session", "[ht
 TEST_CASE("HttpTransport retries reconnection multiple times before failing", "[http][transport][sse][reconnect]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Establish initial session
     mock->queue_response_with_session(200, R"({})", "session-1");
@@ -685,7 +697,7 @@ TEST_CASE("HttpTransport retries reconnection multiple times before failing", "[
 TEST_CASE("HttpTransport propagates error codes correctly after exhausted retries", "[http][transport][error][propagation]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Test different error types are propagated correctly
     SECTION("Timeout error propagation") {
@@ -732,7 +744,7 @@ TEST_CASE("HttpTransport propagates error codes correctly after exhausted retrie
 TEST_CASE("HttpTransport session state transitions correctly during reconnection", "[http][transport][session][state]") {
     auto [transport, mock] = make_test_transport();
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     // Initial connection
     mock->queue_response_with_session(200, R"({})", "session-1");

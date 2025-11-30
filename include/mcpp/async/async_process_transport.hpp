@@ -61,7 +61,7 @@ struct AsyncProcessConfig {
     std::size_t channel_capacity{16};
     
     /// Graceful shutdown timeout before SIGKILL
-    std::chrono::milliseconds shutdown_timeout{std::chrono::seconds(5)};
+    std::chrono::milliseconds shutdown_timeout{5000};  // 5 seconds
     
     /// Security: Skip command validation (only for trusted/test scenarios)
     /// WARNING: Setting to true allows arbitrary command execution!

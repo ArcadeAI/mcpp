@@ -71,11 +71,15 @@ HttpTransport::~HttpTransport() {
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-void HttpTransport::start() {
+HttpResult<void> HttpTransport::start() {
     const bool already_running = running_.exchange(true);
     if (already_running) {
         MCPP_LOG_WARN("HttpTransport::start() called but already running");
-        return;  // Already started
+        return tl::unexpected(HttpTransportError{
+            HttpTransportError::Code::InvalidResponse,
+            "Transport already running",
+            std::nullopt
+        });
     }
 
     MCPP_LOG_INFO("HttpTransport starting");
@@ -95,6 +99,8 @@ void HttpTransport::start() {
             sse_reader_loop();
         });
     }
+    
+    return {};
 }
 
 void HttpTransport::stop() {

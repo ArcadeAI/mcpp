@@ -1,22 +1,110 @@
-BasedOnStyle: LLVM
-Standard: Cpp20
+# MCPP Code Style
+# Based on Google style with modifications for modern C++20
+
+Language: Cpp
+BasedOnStyle: Google
+
+# Indentation
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
-ColumnLimit: 110
-PointerAlignment: Left
-AllowShortIfStatementsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: Empty
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
 NamespaceIndentation: None
+
+# Line length
+ColumnLimit: 100
+
+# Braces
 BreakBeforeBraces: Attach
-IncludeBlocks: Regroup
-SortIncludes: true
-SpaceBeforeParens: ControlStatements
-SpacesInAngles: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: true
 AlignTrailingComments: true
-AlignConsecutiveAssignments: true
+
+# Includes
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Project headers
+  - Regex: '^"mcpp/'
+    Priority: 1
+  # Test headers
+  - Regex: '^"mocks/'
+    Priority: 2
+  # Third-party headers
+  - Regex: '^<(catch2|nlohmann|tl|asio|cpr|spdlog|simdjson|ada|cxxopts)/'
+    Priority: 3
+  # System headers
+  - Regex: '^<.*>'
+    Priority: 4
+  # Other project headers
+  - Regex: '^"'
+    Priority: 5
+
+SortIncludes: true
+
+# Spaces
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyBlock: false
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Breaking
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+BinPackArguments: true
+BinPackParameters: true
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+
+# Pointers and references
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Other
+AccessModifierOffset: -4
+CompactNamespaces: false
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+MaxEmptyLinesToKeep: 1
 ReflowComments: true
-KeepEmptyLinesAtTheStartOfBlocks: false
+SortUsingDeclarations: true
 
+# Penalties (for line breaking decisions)
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 1
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyBreakTemplateDeclaration: 10
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 200
 
-
+# C++20 features
+Standard: c++20

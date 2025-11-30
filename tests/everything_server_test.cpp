@@ -354,7 +354,10 @@ TEST_CASE("Everything server - HTTP/Streamable transport", "[everything][http][!
     config.request_timeout = std::chrono::seconds(10);
     
     HttpTransport transport(config);
-    transport.start();
+    auto start_result = transport.start();
+    if (!start_result.has_value()) {
+        SKIP("Could not start transport: " + start_result.error().message);
+    }
     
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     

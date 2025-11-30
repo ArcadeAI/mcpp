@@ -3,6 +3,8 @@
 #include "mcpp/log/logger.hpp"
 #include "mcpp/security/url_validator.hpp"
 
+#include <chrono>
+
 namespace mcpp {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +42,10 @@ McpResult<InitializeResult> McpClient::connect() {
         return tl::unexpected(McpClientError::protocol_error("Already connected"));
     }
 
-    transport_->start();
+    auto start_result = transport_->start();
+    if (!start_result) {
+        return tl::unexpected(McpClientError::transport_error(start_result.error().message));
+    }
     connected_ = true;
 
     if (config_.auto_initialize) {
@@ -622,18 +627,52 @@ McpResult<Json> McpClient::send_and_receive(const Json& request) {
         return tl::unexpected(McpClientError::transport_error(send_result.error().message));
     }
 
+    // Calculate deadline for timeout
+    const bool has_timeout = config_.request_timeout.count() > 0;
+    const auto deadline = has_timeout 
+        ? std::chrono::steady_clock::now() + config_.request_timeout 
+        : std::chrono::steady_clock::time_point::max();
+
     // Receive messages until we get our response
     // Server may send requests/notifications while we wait
     while (true) {
-        auto recv_result = transport_->receive();
+        // Check timeout
+        if (has_timeout && std::chrono::steady_clock::now() >= deadline) {
+            if (circuit_breaker_) {
+                circuit_breaker_->record_failure();
+            }
+            return tl::unexpected(McpClientError{
+                ClientErrorCode::TransportError,
+                "Request timeout after " + std::to_string(config_.request_timeout.count()) + "ms",
+                std::nullopt
+            });
+        }
+        
+        // Calculate remaining time for this receive
+        auto remaining = has_timeout 
+            ? std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())
+            : std::chrono::milliseconds{1000};  // Default poll interval when no timeout
+        
+        if (remaining.count() <= 0) {
+            remaining = std::chrono::milliseconds{1};  // Minimum poll
+        }
+        
+        // Use receive_with_timeout to avoid blocking forever
+        auto recv_result = transport_->receive_with_timeout(remaining);
         if (!recv_result) {
             if (circuit_breaker_) {
                 circuit_breaker_->record_failure();
             }
             return tl::unexpected(McpClientError::transport_error(recv_result.error().message));
         }
+        
+        // Check if we got a message or timed out
+        if (!recv_result->has_value()) {
+            // No message received, loop to check deadline
+            continue;
+        }
 
-        const Json& message = *recv_result;
+        const Json& message = recv_result->value();
         
         // Check message type
         bool has_id = message.contains("id") && !message["id"].is_null();

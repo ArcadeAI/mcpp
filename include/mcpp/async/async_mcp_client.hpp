@@ -64,7 +64,7 @@ struct AsyncMcpClientConfig {
     std::string client_version = "0.1.0";
 
     /// Request timeout (0 = no timeout)
-    std::chrono::milliseconds request_timeout{std::chrono::seconds(30)};
+    std::chrono::milliseconds request_timeout{30000};  // 30 seconds
 
     /// Auto-initialize on connect
     bool auto_initialize = true;

@@ -82,7 +82,8 @@ public:
     // ─────────────────────────────────────────────────────────────────────────
 
     // Start the transport (opens SSE stream if configured).
-    void start();
+    // Returns error if transport is already running or configuration is invalid.
+    [[nodiscard]] HttpResult<void> start();
 
     // Stop the transport gracefully.
     // Sends DELETE request if session is active.

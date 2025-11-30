@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build_*/
 *.o
 *.a
 *.so
@@ -28,3 +29,15 @@ Untitled/
 
 # Build symlink
 compile_commands.json
+
+# Coverage
+*.gcno
+*.gcda
+*.gcov
+coverage.info
+coverage_report/
+
+# Sanitizer logs
+*.asan.log
+*.ubsan.log
+*.tsan.log

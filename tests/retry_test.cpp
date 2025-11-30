@@ -163,7 +163,7 @@ TEST_CASE("HttpTransport retries on connection failure", "[http][transport][retr
     mock->queue_connection_error("Connection reset");
     mock->queue_json_response(200, R"({"result":"ok"})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -179,7 +179,7 @@ TEST_CASE("HttpTransport retries on timeout", "[http][transport][retry]") {
     mock->queue_timeout("Read timeout");
     mock->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -196,7 +196,7 @@ TEST_CASE("HttpTransport retries on 503 Service Unavailable", "[http][transport]
     mock->queue_response(503, "Service Unavailable");
     mock->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -212,7 +212,7 @@ TEST_CASE("HttpTransport retries on 429 Too Many Requests", "[http][transport][r
     mock->queue_response(429, "Too Many Requests");
     mock->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -227,7 +227,7 @@ TEST_CASE("HttpTransport does NOT retry on 400 Bad Request", "[http][transport][
     
     mock->queue_response(400, "Bad Request");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -243,7 +243,7 @@ TEST_CASE("HttpTransport does NOT retry on SSL error", "[http][transport][retry]
     
     mock->queue_ssl_error("Certificate verification failed");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -263,7 +263,7 @@ TEST_CASE("HttpTransport exhausts retries and returns error", "[http][transport]
     mock->queue_connection_error("Fail 3");
     mock->queue_connection_error("Fail 4");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto result = transport->send({{"method", "test"}});
     
@@ -285,7 +285,7 @@ TEST_CASE("HttpTransport respects Retry-After header", "[http][transport][retry]
     mock->queue_response(503, "Service Unavailable", headers);
     mock->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto start = std::chrono::steady_clock::now();
     auto result = transport->send({{"method", "test"}});
@@ -312,7 +312,7 @@ TEST_CASE("HttpTransport tracks retry count in session manager", "[http][transpo
     mock->queue_connection_error("Fail");
     mock->queue_response_with_session(200, R"({})", "session-123");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     transport->send({{"method", "init"}});
     
     // Should have transitioned through Connecting state
@@ -344,7 +344,7 @@ TEST_CASE("HttpTransport uses configured backoff policy", "[http][transport][ret
     mock_raw->queue_connection_error("Fail 2");
     mock_raw->queue_json_response(200, R"({})");
     
-    transport->start();
+    REQUIRE(transport->start().has_value());
     
     auto start = std::chrono::steady_clock::now();
     transport->send({{"method", "test"}});

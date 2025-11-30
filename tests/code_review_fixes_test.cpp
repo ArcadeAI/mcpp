@@ -171,7 +171,7 @@ TEST_CASE("HttpTransport stop/start cycle works correctly", "[http][transport][l
     
     // First cycle
     mock_ptr->queue_json_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})");
-    transport.start();
+    REQUIRE(transport.start().has_value());
     
     Json msg1 = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
     auto result1 = transport.send(msg1);
@@ -181,7 +181,7 @@ TEST_CASE("HttpTransport stop/start cycle works correctly", "[http][transport][l
     
     // Second cycle - should work after reset()
     mock_ptr->queue_json_response(200, R"({"jsonrpc":"2.0","id":2,"result":{}})");
-    transport.start();
+    REQUIRE(transport.start().has_value());
     
     Json msg2 = {{"jsonrpc", "2.0"}, {"id", 2}, {"method", "test"}};
     auto result2 = transport.send(msg2);
@@ -202,7 +202,7 @@ TEST_CASE("HttpTransport cancel and restart works", "[http][transport][lifecycle
     
     // Start and cancel
     mock_ptr->queue_json_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})");
-    transport.start();
+    REQUIRE(transport.start().has_value());
     
     // Simulate cancel
     mock_ptr->cancel();
@@ -210,7 +210,7 @@ TEST_CASE("HttpTransport cancel and restart works", "[http][transport][lifecycle
     
     // Restart should work (reset() clears cancelled flag)
     mock_ptr->queue_json_response(200, R"({"jsonrpc":"2.0","id":2,"result":{}})");
-    transport.start();
+    REQUIRE(transport.start().has_value());
     
     Json msg = {{"jsonrpc", "2.0"}, {"id", 2}, {"method", "test"}};
     auto result = transport.send(msg);
@@ -293,7 +293,7 @@ TEST_CASE("HttpTransport handles session headers case-insensitively", "[http][tr
         headers["Mcp-Session-Id"] = "session-123";
         mock_ptr->queue_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})", headers);
         
-        transport.start();
+        REQUIRE(transport.start().has_value());
         
         Json msg = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
         auto result = transport.send(msg);
@@ -320,7 +320,7 @@ TEST_CASE("HttpTransport handles session headers case-insensitively", "[http][tr
         headers["mcp-session-id"] = "session-456";
         mock_ptr->queue_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})", headers);
         
-        transport.start();
+        REQUIRE(transport.start().has_value());
         
         Json msg = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
         auto result = transport.send(msg);
@@ -347,7 +347,7 @@ TEST_CASE("HttpTransport handles session headers case-insensitively", "[http][tr
         headers["MCP-SESSION-ID"] = "session-789";
         mock_ptr->queue_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})", headers);
         
-        transport.start();
+        REQUIRE(transport.start().has_value());
         
         Json msg = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}};
         auto result = transport.send(msg);

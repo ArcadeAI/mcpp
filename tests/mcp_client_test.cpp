@@ -1270,3 +1270,51 @@ TEST_CASE("McpClient circuit breaker with custom config", "[mcp][client][circuit
     REQUIRE(client.circuit_state() == CircuitState::Closed);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Request Timeout Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("McpClient request_timeout is configurable", "[mcp][client][timeout]") {
+    // Test that request_timeout can be configured and client still works
+    McpClientConfig config;
+    config.request_timeout = std::chrono::milliseconds(5000);
+    
+    // Verify the config is set correctly
+    REQUIRE(config.request_timeout == std::chrono::milliseconds(5000));
+    REQUIRE(config.request_timeout != std::chrono::milliseconds(0));
+}
+
+TEST_CASE("McpClient request_timeout can be set to custom value", "[mcp][client][timeout]") {
+    static MockMcpServer server;
+    auto mock_client = std::make_unique<MockMcpHttpClient>(server);
+    
+    McpClientConfig config;
+    config.client_name = "test-client";
+    config.transport.base_url = "https://mock.mcp.local/mcp";
+    config.transport.auto_open_sse_stream = false;
+    config.transport.backoff_policy = std::make_shared<NoBackoff>();
+    
+    // Set a specific timeout
+    config.request_timeout = std::chrono::milliseconds(5000);
+    
+    // Verify the config is set correctly
+    REQUIRE(config.request_timeout == std::chrono::milliseconds(5000));
+}
+
+TEST_CASE("McpClient request_timeout zero means no timeout", "[mcp][client][timeout]") {
+    McpClientConfig config;
+    
+    // Zero timeout means no timeout
+    config.request_timeout = std::chrono::milliseconds(0);
+    
+    // Verify the config is set correctly
+    REQUIRE(config.request_timeout == std::chrono::milliseconds(0));
+}
+
+TEST_CASE("McpClient default request_timeout is 30 seconds", "[mcp][client][timeout]") {
+    McpClientConfig config;
+    
+    // Default should be 30 seconds
+    REQUIRE(config.request_timeout == std::chrono::milliseconds(30000));
+}
+

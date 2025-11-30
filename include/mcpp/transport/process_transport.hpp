@@ -16,6 +16,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <functional>
+#include <thread>
 #include <vector>
 
 #include <sys/types.h>  // For pid_t
@@ -30,10 +32,13 @@ using Json = nlohmann::json;
 
 /// How to handle stderr from the subprocess
 enum class StderrHandling {
-    Discard,    // Redirect to /dev/null (default)
+    Discard,     // Redirect to /dev/null (default)
     Passthrough, // Let stderr go to parent's stderr
-    Capture     // Capture and store (future: accessible via method)
+    Capture      // Capture stderr (accessible via read_stderr())
 };
+
+/// Callback type for stderr data
+using StderrCallback = std::function<void(std::string_view)>;
 
 struct ProcessTransportConfig {
     std::string command;                     // Command to execute
@@ -42,6 +47,9 @@ struct ProcessTransportConfig {
     bool use_content_length_framing{true};   // Use Content-Length headers (false = raw JSON per line)
     StderrHandling stderr_handling{StderrHandling::Discard};
     std::chrono::milliseconds read_timeout{0}; // 0 = no timeout (blocking)
+    
+    /// Callback for stderr data (only used when stderr_handling == Capture)
+    StderrCallback stderr_callback;
     
     // Security: Skip command validation (only for trusted/test scenarios)
     // WARNING: Setting to true allows arbitrary command execution!
@@ -86,8 +94,16 @@ public:
 
     /// Get the child process exit code (only valid after process exits)
     [[nodiscard]] std::optional<int> exit_code() const;
+    
+    /// Read captured stderr data (only available when stderr_handling == Capture)
+    /// Returns empty string if no data or not capturing
+    [[nodiscard]] std::string read_stderr();
+    
+    /// Check if there's stderr data available
+    [[nodiscard]] bool has_stderr_data() const;
 
 private:
+    void stderr_reader_loop();
     [[nodiscard]] TransportResult<Json> receive_line();
     [[nodiscard]] TransportResult<Json> receive_framed();
     /// Wait for fd to be readable. Called with mutex held, fd passed explicitly.
@@ -114,6 +130,12 @@ private:
     char read_buffer_[read_buffer_size];
     std::size_t read_buffer_pos_{0};
     std::size_t read_buffer_len_{0};
+    
+    // Stderr capture
+    int stderr_fd_{-1};
+    std::thread stderr_thread_;
+    std::string stderr_buffer_;
+    mutable std::mutex stderr_mutex_;
 };
 
 }  // namespace mcpp

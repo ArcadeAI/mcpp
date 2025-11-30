@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstring>
 #include <sstream>
+#include <thread>
 
 namespace mcpp {
 
@@ -163,6 +164,7 @@ TransportResult<void> ProcessTransport::start() {
     // Create pipes for stdin and stdout
     int stdin_pipe[2];   // [read, write] - we write to stdin_pipe[1]
     int stdout_pipe[2];  // [read, write] - we read from stdout_pipe[0]
+    int stderr_pipe[2] = {-1, -1};  // Only used for Capture mode
 
     if (pipe(stdin_pipe) == -1 || pipe(stdout_pipe) == -1) {
         std::lock_guard lock(mutex_);
@@ -171,6 +173,22 @@ TransportResult<void> ProcessTransport::start() {
             TransportError::Category::Network,
             "Failed to create pipes: " + std::string(strerror(errno))
         ));
+    }
+    
+    // Create stderr pipe if capturing
+    if (config_.stderr_handling == StderrHandling::Capture) {
+        if (pipe(stderr_pipe) == -1) {
+            close(stdin_pipe[0]);
+            close(stdin_pipe[1]);
+            close(stdout_pipe[0]);
+            close(stdout_pipe[1]);
+            std::lock_guard lock(mutex_);
+            starting_ = false;
+            return tl::unexpected(make_error(
+                TransportError::Category::Network,
+                "Failed to create stderr pipe: " + std::string(strerror(errno))
+            ));
+        }
     }
 
     pid_t pid = fork();
@@ -181,6 +199,10 @@ TransportResult<void> ProcessTransport::start() {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
+        if (stderr_pipe[0] != -1) {
+            close(stderr_pipe[0]);
+            close(stderr_pipe[1]);
+        }
         {
             std::lock_guard lock(mutex_);
             starting_ = false;
@@ -217,8 +239,10 @@ TransportResult<void> ProcessTransport::start() {
                 // Leave stderr as-is (inherited from parent)
                 break;
             case StderrHandling::Capture:
-                // TODO: Create pipe for stderr capture
-                // For now, treat as passthrough
+                // Redirect stderr to pipe
+                dup2(stderr_pipe[1], STDERR_FILENO);
+                close(stderr_pipe[0]);
+                close(stderr_pipe[1]);
                 break;
         }
 
@@ -232,6 +256,11 @@ TransportResult<void> ProcessTransport::start() {
     // Parent process - close unused pipe ends
     close(stdin_pipe[0]);   // Close read end of stdin pipe
     close(stdout_pipe[1]);  // Close write end of stdout pipe
+    
+    // Handle stderr pipe in parent
+    if (config_.stderr_handling == StderrHandling::Capture) {
+        close(stderr_pipe[1]);  // Close write end of stderr pipe
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Commit results under lock
@@ -241,8 +270,16 @@ TransportResult<void> ProcessTransport::start() {
         child_pid_ = pid;
         stdin_fd_ = stdin_pipe[1];
         stdout_fd_ = stdout_pipe[0];
+        if (config_.stderr_handling == StderrHandling::Capture) {
+            stderr_fd_ = stderr_pipe[0];
+        }
         running_ = true;
         starting_ = false;  // Done starting
+    }
+    
+    // Start stderr reader thread if capturing
+    if (config_.stderr_handling == StderrHandling::Capture) {
+        stderr_thread_ = std::thread([this]() { stderr_reader_loop(); });
     }
 
     MCPP_LOG_INFO("Started process: " + config_.command);
@@ -254,6 +291,7 @@ void ProcessTransport::stop() {
     pid_t pid_to_terminate = -1;
     int stdin_to_close = -1;
     int stdout_to_close = -1;
+    int stderr_to_close = -1;
     
     // Extract state under lock, then release before blocking operations
     {
@@ -269,6 +307,7 @@ void ProcessTransport::stop() {
         pid_to_terminate = child_pid_;
         stdin_to_close = stdin_fd_;
         stdout_to_close = stdout_fd_;
+        stderr_to_close = stderr_fd_;
         
         // Mark as not running immediately
         running_ = false;
@@ -276,6 +315,7 @@ void ProcessTransport::stop() {
         child_pid_ = -1;
         stdin_fd_ = -1;
         stdout_fd_ = -1;
+        stderr_fd_ = -1;
         
         // Reset read buffer state for potential restart
         read_buffer_pos_ = 0;
@@ -288,6 +328,14 @@ void ProcessTransport::stop() {
     }
     if (stdout_to_close != -1) {
         close(stdout_to_close);
+    }
+    if (stderr_to_close != -1) {
+        close(stderr_to_close);
+    }
+    
+    // Wait for stderr reader thread
+    if (stderr_thread_.joinable()) {
+        stderr_thread_.join();
     }
 
     // Terminate child process outside the lock (may block briefly)
@@ -631,6 +679,74 @@ headers_complete:
             "Failed to parse JSON: " + std::string(e.what())
         ));
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stderr Capture
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ProcessTransport::stderr_reader_loop() {
+    constexpr std::size_t buffer_size = 4096;
+    char buffer[buffer_size];
+    
+    while (true) {
+        int fd;
+        {
+            std::lock_guard lock(mutex_);
+            fd = stderr_fd_;
+            if (fd == -1 || !running_) {
+                break;
+            }
+        }
+        
+        // Use poll to check for data with timeout
+        struct pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        
+        int poll_result = poll(&pfd, 1, 100);  // 100ms timeout
+        if (poll_result <= 0) {
+            // Timeout or error - check if still running
+            std::lock_guard lock(mutex_);
+            if (!running_) break;
+            continue;
+        }
+        
+        if (!(pfd.revents & POLLIN)) {
+            continue;
+        }
+        
+        ssize_t n = ::read(fd, buffer, buffer_size);
+        if (n <= 0) {
+            // EOF or error
+            break;
+        }
+        
+        std::string data(buffer, static_cast<std::size_t>(n));
+        
+        // Store in buffer and call callback
+        {
+            std::lock_guard lock(stderr_mutex_);
+            stderr_buffer_ += data;
+        }
+        
+        // Call callback if configured
+        if (config_.stderr_callback) {
+            config_.stderr_callback(data);
+        }
+    }
+}
+
+std::string ProcessTransport::read_stderr() {
+    std::lock_guard lock(stderr_mutex_);
+    std::string result = std::move(stderr_buffer_);
+    stderr_buffer_.clear();
+    return result;
+}
+
+bool ProcessTransport::has_stderr_data() const {
+    std::lock_guard lock(stderr_mutex_);
+    return !stderr_buffer_.empty();
 }
 
 }  // namespace mcpp

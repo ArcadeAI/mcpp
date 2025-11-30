@@ -499,7 +499,7 @@ TEST_CASE("Session state transitions through full lifecycle", "[integration][mcp
     REQUIRE(transport.session_state() == SessionState::Disconnected);
     
     // Start -> Connecting
-    transport.start();
+    REQUIRE(transport.start().has_value());
     REQUIRE(transport.session_state() == SessionState::Connecting);
     
     // Send initialize -> Connected
@@ -509,8 +509,8 @@ TEST_CASE("Session state transitions through full lifecycle", "[integration][mcp
         {"method", "initialize"},
         {"params", {{"protocolVersion", "2024-11-05"}}}
     };
-    transport.send(init);
-    transport.receive();
+    (void)transport.send(init);
+    (void)transport.receive();
     
     REQUIRE(transport.session_state() == SessionState::Connected);
     REQUIRE(transport.session_id().has_value());
@@ -521,6 +521,82 @@ TEST_CASE("Session state transitions through full lifecycle", "[integration][mcp
     // Verify state transitions
     REQUIRE(std::find(states.begin(), states.end(), SessionState::Connecting) != states.end());
     REQUIRE(std::find(states.begin(), states.end(), SessionState::Connected) != states.end());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HttpTransport Start/Stop Lifecycle Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Integration: HttpTransport start returns error when already running", "[integration][lifecycle]") {
+    MockMcpServer server;
+    auto mock_client = std::make_unique<MockMcpHttpClient>(server);
+    
+    HttpTransportConfig config;
+    config.base_url = "https://mock.mcp.local/mcp";
+    config.auto_open_sse_stream = false;
+    config.backoff_policy = std::make_shared<NoBackoff>();
+    
+    HttpTransport transport(std::move(config), std::move(mock_client));
+    
+    // First start should succeed
+    auto result1 = transport.start();
+    REQUIRE(result1.has_value());
+    REQUIRE(transport.is_running());
+    
+    // Second start should fail
+    auto result2 = transport.start();
+    REQUIRE(!result2.has_value());
+    REQUIRE(transport.is_running());  // Still running
+    
+    transport.stop();
+    REQUIRE(!transport.is_running());
+    
+    // After stop, start should succeed again
+    auto result3 = transport.start();
+    REQUIRE(result3.has_value());
+    REQUIRE(transport.is_running());
+    
+    transport.stop();
+}
+
+TEST_CASE("Integration: HttpTransport start/stop cycle preserves functionality", "[integration][lifecycle]") {
+    MockMcpServer server;
+    auto mock_client = std::make_unique<MockMcpHttpClient>(server);
+    auto* mock_ptr = mock_client.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://mock.mcp.local/mcp";
+    config.auto_open_sse_stream = false;
+    config.backoff_policy = std::make_shared<NoBackoff>();
+    
+    HttpTransport transport(std::move(config), std::move(mock_client));
+    
+    // First cycle
+    REQUIRE(transport.start().has_value());
+    
+    Json init = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}, {"params", {}}};
+    auto send_result = transport.send(init);
+    REQUIRE(send_result.has_value());
+    
+    auto recv_result = transport.receive();
+    REQUIRE(recv_result.has_value());
+    
+    transport.stop();
+    
+    // Reset mock for second cycle
+    mock_ptr->reset();
+    
+    // Second cycle should work identically
+    REQUIRE(transport.start().has_value());
+    
+    Json init2 = {{"jsonrpc", "2.0"}, {"id", 2}, {"method", "initialize"}, {"params", {}}};
+    auto send_result2 = transport.send(init2);
+    REQUIRE(send_result2.has_value());
+    
+    auto recv_result2 = transport.receive();
+    REQUIRE(recv_result2.has_value());
+    
+    transport.stop();
 }
 
 
