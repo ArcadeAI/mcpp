@@ -33,6 +33,10 @@ struct McpClientConfig {
 
     // Request timeout (0 = no timeout)
     std::chrono::milliseconds request_timeout{30000};
+    
+    // Handler timeout - max time for handlers (sampling, elicitation, roots) to respond
+    // Set to 0 for no timeout (not recommended)
+    std::chrono::milliseconds handler_timeout{60000};
 
     // Auto-initialize on connect
     bool auto_initialize = true;

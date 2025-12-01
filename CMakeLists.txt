@@ -259,6 +259,7 @@ add_executable(mcpp_tests
     tests/code_review_fixes_test.cpp
     tests/arcade_client_test.cpp
     tests/arcade_gateway_test.cpp
+    tests/concurrency_test.cpp
 )
 target_include_directories(mcpp_tests PRIVATE tests)
 target_link_libraries(mcpp_tests PRIVATE mcpp_lib Catch2::Catch2WithMain)

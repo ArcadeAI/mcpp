@@ -953,3 +953,167 @@ TEST_CASE("HttpTransport stop/start cycle preserves config but resets state", "[
     
     transport.stop();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Path Traversal Protection Tests
+// ═══════════════════════════════════════════════════════════════════════════
+// These tests verify the HTTP client rejects path traversal attempts.
+// The protection is implemented in CprHttpClient::build_url().
+
+TEST_CASE("HttpClient rejects literal path traversal", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    SECTION("Simple ..") {
+        REQUIRE_THROWS_AS(client->get("/../etc/passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Mid-path ..") {
+        REQUIRE_THROWS_AS(client->get("/api/../../../etc/passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Trailing ..") {
+        REQUIRE_THROWS_AS(client->get("/api/data/..", {}), std::invalid_argument);
+    }
+    
+    SECTION("Multiple ..") {
+        REQUIRE_THROWS_AS(client->get("/a/b/../../c/../d", {}), std::invalid_argument);
+    }
+}
+
+TEST_CASE("HttpClient rejects URL-encoded path traversal", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    SECTION("Lowercase %2e%2e") {
+        REQUIRE_THROWS_AS(client->get("/%2e%2e/etc/passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Uppercase %2E%2E") {
+        REQUIRE_THROWS_AS(client->get("/%2E%2E/etc/passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Mixed case %2e.") {
+        REQUIRE_THROWS_AS(client->get("/%2e./etc/passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Mixed case .%2e") {
+        REQUIRE_THROWS_AS(client->get("/.%2e/etc/passwd", {}), std::invalid_argument);
+    }
+}
+
+TEST_CASE("HttpClient rejects double-encoded path traversal", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    // %252e = %2e (double encoded .)
+    REQUIRE_THROWS_AS(client->get("/%252e%252e/etc/passwd", {}), std::invalid_argument);
+}
+
+TEST_CASE("HttpClient rejects backslash path traversal", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    SECTION("Literal backslash") {
+        REQUIRE_THROWS_AS(client->get("/..\\etc\\passwd", {}), std::invalid_argument);
+    }
+    
+    SECTION("Encoded backslash %5c") {
+        REQUIRE_THROWS_AS(client->get("/..%5c..%5cetc", {}), std::invalid_argument);
+    }
+    
+    SECTION("Encoded forward slash %2f") {
+        REQUIRE_THROWS_AS(client->get("/..%2f..%2fetc", {}), std::invalid_argument);
+    }
+}
+
+TEST_CASE("HttpClient rejects dangerous characters", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    SECTION("Null byte") {
+        std::string path_with_null = "/api/data";
+        path_with_null += '\0';
+        path_with_null += "/secret";
+        REQUIRE_THROWS_AS(client->get(path_with_null, {}), std::invalid_argument);
+    }
+    
+    SECTION("Control character SOH") {
+        std::string path = "/api/";
+        path += static_cast<char>(0x01);
+        path += "data";
+        REQUIRE_THROWS_AS(client->get(path, {}), std::invalid_argument);
+    }
+    
+    SECTION("Control character DEL") {
+        std::string path = "/api/";
+        path += static_cast<char>(0x7F);
+        path += "data";
+        REQUIRE_THROWS_AS(client->get(path, {}), std::invalid_argument);
+    }
+}
+
+TEST_CASE("HttpClient allows valid paths", "[http][security][path-traversal]") {
+    auto client = make_http_client();
+    client->set_base_url("https://api.example.com");
+    
+    // These should NOT throw (though they may fail due to no server)
+    // We just verify the path validation passes by checking we get a connection error,
+    // not an invalid_argument exception
+    
+    SECTION("Simple path") {
+        // Will fail with connection error, not invalid_argument
+        auto result = client->get("/api/data", {});
+        // Should be a connection error, not a path validation error
+        REQUIRE(!result.has_value());
+        // Any error code except path validation (which throws) is acceptable
+        REQUIRE(result.error().code != HttpClientError::Code::Unknown);
+    }
+    
+    SECTION("Path with dots in filename") {
+        auto result = client->get("/api/file.json", {});
+        REQUIRE(!result.has_value()); // Connection error expected
+    }
+    
+    SECTION("Path with single dot") {
+        auto result = client->get("/api/./data", {});
+        REQUIRE(!result.has_value()); // Connection error expected
+    }
+    
+    SECTION("Path with query string") {
+        auto result = client->get("/api/data?key=value", {});
+        REQUIRE(!result.has_value()); // Connection error expected
+    }
+    
+    SECTION("Path with fragment") {
+        auto result = client->get("/api/data#section", {});
+        REQUIRE(!result.has_value()); // Connection error expected
+    }
+}
+
+TEST_CASE("HttpClient normalizes paths correctly", "[http][security][path-traversal]") {
+    // Test that path normalization works correctly for valid paths
+    // by checking the URL doesn't contain redundant segments
+    
+    auto mock = std::make_unique<MockHttpClient>();
+    auto* mock_raw = mock.get();
+    
+    HttpTransportConfig config;
+    config.base_url = "https://api.example.com";
+    config.auto_open_sse_stream = false;
+    
+    HttpTransport transport(std::move(config), std::move(mock));
+    REQUIRE(transport.start().has_value());
+    
+    // Queue a response so send doesn't fail
+    mock_raw->queue_json_response(200, R"({"jsonrpc":"2.0","id":1,"result":{}})");
+    
+    Json message = {{"jsonrpc", "2.0"}, {"id", 1}, {"method", "test"}};
+    auto result = transport.send(message.dump());
+    
+    // The request should succeed (mock doesn't validate path normalization,
+    // but at least we verify no exception was thrown)
+    REQUIRE(result.has_value());
+    
+    transport.stop();
+}

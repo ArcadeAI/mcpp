@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <stdexcept>
+#include <vector>
 
 namespace mcpp {
 
@@ -168,27 +169,142 @@ public:
     }
 
 private:
+    // ─────────────────────────────────────────────────────────────────────────
+    // Path Traversal Protection
+    // ─────────────────────────────────────────────────────────────────────────
+    // Validates and normalizes URL paths to prevent directory traversal attacks.
+    // 
+    // Protections:
+    // 1. Reject literal ".." sequences
+    // 2. Reject URL-encoded ".." (%2e%2e, %2E%2E, mixed case)
+    // 3. Reject double-encoded ".." (%252e%252e)
+    // 4. Reject backslash variants (Windows-style)
+    // 5. Normalize path and verify it doesn't escape base
+    // 6. Reject null bytes (can truncate paths in some parsers)
+    // 7. Reject control characters
+    
+    static bool contains_traversal_pattern(const std::string& path) {
+        // Convert to lowercase for case-insensitive checks
+        std::string lower = path;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                      [](unsigned char c) { return std::tolower(c); });
+        
+        // Check for literal ".."
+        if (lower.find("..") != std::string::npos) {
+            return true;
+        }
+        
+        // Check for URL-encoded ".." (%2e = '.')
+        if (lower.find("%2e%2e") != std::string::npos ||
+            lower.find("%2e.") != std::string::npos ||
+            lower.find(".%2e") != std::string::npos) {
+            return true;
+        }
+        
+        // Check for double-encoded ".." (%25 = '%')
+        if (lower.find("%252e") != std::string::npos) {
+            return true;
+        }
+        
+        // Check for backslash variants (Windows-style traversal)
+        if (lower.find("..\\") != std::string::npos ||
+            lower.find("..%5c") != std::string::npos ||
+            lower.find("..%2f") != std::string::npos) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    static bool contains_dangerous_characters(const std::string& path) {
+        for (unsigned char c : path) {
+            // Reject null bytes (can truncate paths)
+            if (c == '\0') return true;
+            
+            // Reject control characters (0x00-0x1F, 0x7F)
+            if (c < 0x20 || c == 0x7F) return true;
+        }
+        return false;
+    }
+    
+    // Normalize path by resolving . and .. components
+    // Returns empty string if path escapes root
+    static std::string normalize_path(const std::string& path) {
+        if (path.empty()) return "/";
+        
+        std::vector<std::string> segments;
+        std::string current;
+        
+        for (size_t i = 0; i < path.size(); ++i) {
+            char c = path[i];
+            if (c == '/' || c == '\\') {
+                if (!current.empty()) {
+                    if (current == "..") {
+                        if (segments.empty()) {
+                            // Trying to go above root
+                            return "";
+                        }
+                        segments.pop_back();
+                    } else if (current != ".") {
+                        segments.push_back(current);
+                    }
+                    current.clear();
+                }
+            } else {
+                current += c;
+            }
+        }
+        
+        // Handle last segment
+        if (!current.empty()) {
+            if (current == "..") {
+                if (segments.empty()) return "";
+                segments.pop_back();
+            } else if (current != ".") {
+                segments.push_back(current);
+            }
+        }
+        
+        // Rebuild path
+        std::string result;
+        for (const auto& seg : segments) {
+            result += "/" + seg;
+        }
+        
+        // Preserve query string if present
+        auto query_pos = path.find('?');
+        if (query_pos != std::string::npos) {
+            result += path.substr(query_pos);
+        }
+        
+        return result.empty() ? "/" : result;
+    }
+    
     // Build URL and headers for request
     // Validates path to prevent path traversal attacks
     std::string build_url(const std::string& path) {
-        // Reject paths with traversal patterns
-        if (path.find("..") != std::string::npos) {
-            throw std::invalid_argument("Path traversal detected in URL path");
+        // Check for dangerous characters first
+        if (contains_dangerous_characters(path)) {
+            throw std::invalid_argument("Path contains dangerous characters (null bytes or control chars)");
         }
         
-        // Reject paths with encoded traversal (%2e%2e or %2E%2E)
-        std::string path_lower = path;
-        std::transform(path_lower.begin(), path_lower.end(), path_lower.begin(),
-                      [](unsigned char c) { return std::tolower(c); });
-        if (path_lower.find("%2e%2e") != std::string::npos) {
-            throw std::invalid_argument("Encoded path traversal detected in URL path");
+        // Check for traversal patterns (before normalization to catch encoded variants)
+        if (contains_traversal_pattern(path)) {
+            throw std::invalid_argument("Path traversal pattern detected in URL path");
         }
         
-        // Ensure path starts with / if not empty
-        if (!path.empty() && path[0] != '/') {
-            return base_url_ + "/" + path;
+        // Normalize the path and verify it doesn't escape root
+        std::string normalized = normalize_path(path);
+        if (normalized.empty()) {
+            throw std::invalid_argument("Path normalization failed - possible traversal attempt");
         }
-        return base_url_ + path;
+        
+        // Double-check normalized path doesn't contain traversal
+        if (contains_traversal_pattern(normalized)) {
+            throw std::invalid_argument("Path traversal detected after normalization");
+        }
+        
+        return base_url_ + normalized;
     }
 
     cpr::Header build_headers(const HeaderMap& extra_headers) {

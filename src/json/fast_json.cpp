@@ -23,7 +23,7 @@ JsonResult FastJsonParser::parse_padded(simdjson::padded_string_view json_str) {
         ));
     }
 
-    // Convert to nlohmann::json
+    // Convert to nlohmann::json with depth tracking
     try {
         auto doc = std::move(doc_result).value();
         auto value = doc.get_value();
@@ -34,18 +34,29 @@ JsonResult FastJsonParser::parse_padded(simdjson::padded_string_view json_str) {
                 0
             ));
         }
-        return convert(value.value());
+        return convert(value.value(), 0);
     } catch (const simdjson::simdjson_error& e) {
         return tl::unexpected(JsonParseError(e.what(), 0));
     }
 }
 
-nlohmann::json FastJsonParser::convert(simdjson::ondemand::value value) {
+JsonResult FastJsonParser::convert(simdjson::ondemand::value value, std::size_t depth) {
+    // Check depth limit to prevent stack overflow
+    if (depth > config_.max_depth) {
+        return tl::unexpected(JsonParseError(
+            "Maximum nesting depth exceeded (" + std::to_string(config_.max_depth) + ")",
+            0
+        ));
+    }
+
     // Get the type of the value
     auto type_result = value.type();
     const bool type_failed = type_result.error() != simdjson::SUCCESS;
     if (type_failed) {
-        return nlohmann::json();  // Return null on error
+        return tl::unexpected(JsonParseError(
+            std::string(simdjson::error_message(type_result.error())),
+            0
+        ));
     }
 
     switch (type_result.value()) {
@@ -53,27 +64,37 @@ nlohmann::json FastJsonParser::convert(simdjson::ondemand::value value) {
             auto obj = value.get_object();
             const bool obj_ok = (obj.error() == simdjson::SUCCESS);
             if (obj_ok) {
-                return convert_object(obj.value());
+                return convert_object(obj.value(), depth + 1);
             }
-            return nlohmann::json::object();
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(obj.error())),
+                0
+            ));
         }
 
         case simdjson::ondemand::json_type::array: {
             auto arr = value.get_array();
             const bool arr_ok = (arr.error() == simdjson::SUCCESS);
             if (arr_ok) {
-                return convert_array(arr.value());
+                return convert_array(arr.value(), depth + 1);
             }
-            return nlohmann::json::array();
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(arr.error())),
+                0
+            ));
         }
 
         case simdjson::ondemand::json_type::string: {
             auto str = value.get_string();
             const bool str_ok = (str.error() == simdjson::SUCCESS);
             if (str_ok) {
+                // Direct construction from string_view avoids intermediate copy
                 return nlohmann::json(std::string(str.value()));
             }
-            return nlohmann::json("");
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(str.error())),
+                0
+            ));
         }
 
         case simdjson::ondemand::json_type::number: {
@@ -96,7 +117,7 @@ nlohmann::json FastJsonParser::convert(simdjson::ondemand::value value) {
                 return nlohmann::json(double_val.value());
             }
 
-            return nlohmann::json(0);
+            return tl::unexpected(JsonParseError("Failed to parse number", 0));
         }
 
         case simdjson::ondemand::json_type::boolean: {
@@ -105,47 +126,70 @@ nlohmann::json FastJsonParser::convert(simdjson::ondemand::value value) {
             if (bool_ok) {
                 return nlohmann::json(bool_val.value());
             }
-            return nlohmann::json(false);
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(bool_val.error())),
+                0
+            ));
         }
 
         case simdjson::ondemand::json_type::null:
             return nlohmann::json(nullptr);
     }
 
-    return nlohmann::json();  // Fallback
+    return tl::unexpected(JsonParseError("Unknown JSON type", 0));
 }
 
-nlohmann::json FastJsonParser::convert_object(simdjson::ondemand::object obj) {
+JsonResult FastJsonParser::convert_object(simdjson::ondemand::object obj, std::size_t depth) {
     nlohmann::json result = nlohmann::json::object();
 
     for (auto field : obj) {
         auto key_result = field.unescaped_key();
         const bool key_ok = (key_result.error() == simdjson::SUCCESS);
         if (key_ok == false) {
-            continue;
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(key_result.error())),
+                0
+            ));
         }
 
         auto val_result = field.value();
         const bool val_ok = (val_result.error() == simdjson::SUCCESS);
         if (val_ok == false) {
-            continue;
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(val_result.error())),
+                0
+            ));
         }
 
-        std::string key(key_result.value());
-        result[key] = convert(val_result.value());
+        // Convert key directly from string_view
+        std::string_view key_sv = key_result.value();
+        auto converted = convert(val_result.value(), depth);
+        if (!converted) {
+            return converted;  // Propagate error
+        }
+        result[std::string(key_sv)] = std::move(*converted);
     }
 
     return result;
 }
 
-nlohmann::json FastJsonParser::convert_array(simdjson::ondemand::array arr) {
+JsonResult FastJsonParser::convert_array(simdjson::ondemand::array arr, std::size_t depth) {
     nlohmann::json result = nlohmann::json::array();
 
     for (auto element : arr) {
         const bool elem_ok = (element.error() == simdjson::SUCCESS);
-        if (elem_ok) {
-            result.push_back(convert(element.value()));
+        if (!elem_ok) {
+            return tl::unexpected(JsonParseError(
+                std::string(simdjson::error_message(element.error())),
+                0
+            ));
         }
+        
+        auto converted = convert(element.value(), depth);
+        if (!converted) {
+            return converted;  // Propagate error
+        }
+        result.push_back(std::move(*converted));
     }
 
     return result;

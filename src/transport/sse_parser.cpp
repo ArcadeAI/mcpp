@@ -11,6 +11,12 @@ constexpr std::size_t buffer_compact_threshold = 4096;
 std::vector<SseEvent> SseParser::feed(std::string_view chunk) {
     std::vector<SseEvent> events;
 
+    // Check if adding this chunk would exceed buffer limit
+    const std::size_t new_size = buffer_.size() + chunk.size();
+    if (new_size > config_.max_buffer_size) {
+        throw SseBufferOverflowError(new_size, config_.max_buffer_size);
+    }
+
     buffer_ += chunk;
 
     // Search for newlines starting from current position
@@ -32,6 +38,16 @@ std::vector<SseEvent> SseParser::feed(std::string_view chunk) {
         // Process the line. Returns true if this was a blank line (event complete)
         const bool event_complete = process_line(line_view);
         if (event_complete) {
+            // Check event size limit before emitting
+            if (current_data_.size() > config_.max_event_size) {
+                // Discard oversized event and reset state
+                current_data_.clear();
+                current_id_ = std::nullopt;
+                current_event_ = std::nullopt;
+                current_retry_ = std::nullopt;
+                // Don't throw - just skip this event
+                continue;
+            }
             events.push_back(emit_event());
         }
     }

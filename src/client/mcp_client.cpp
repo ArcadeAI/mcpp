@@ -4,6 +4,7 @@
 #include "mcpp/security/url_validator.hpp"
 
 #include <chrono>
+#include <future>
 
 namespace mcpp {
 
@@ -725,20 +726,43 @@ void McpClient::handle_server_request(const Json& request) {
     Json params = request.value("params", Json::object());
     auto request_id = request["id"];
     
-    // Route to appropriate handler
+    // Route to appropriate handler with timeout
     McpResult<Json> result;
     
-    if (method == "elicitation/create") {
-        result = handle_elicitation_request(params);
-    }
-    else if (method == "sampling/createMessage") {
-        result = handle_sampling_request(params);
-    }
-    else if (method == "roots/list") {
-        result = handle_roots_list_request();
-    }
-    else {
-        result = tl::unexpected(McpClientError::protocol_error("Method not found: " + method));
+    // Lambda to run handler
+    auto run_handler = [this, &method, &params]() -> McpResult<Json> {
+        if (method == "elicitation/create") {
+            return handle_elicitation_request(params);
+        }
+        else if (method == "sampling/createMessage") {
+            return handle_sampling_request(params);
+        }
+        else if (method == "roots/list") {
+            return handle_roots_list_request();
+        }
+        else {
+            return tl::unexpected(McpClientError::protocol_error("Method not found: " + method));
+        }
+    };
+    
+    // Apply timeout if configured
+    const bool has_timeout = config_.handler_timeout.count() > 0;
+    if (has_timeout) {
+        // Run handler in async task with timeout
+        auto future = std::async(std::launch::async, run_handler);
+        auto status = future.wait_for(config_.handler_timeout);
+        
+        if (status == std::future_status::timeout) {
+            MCPP_LOG_WARN("Handler timeout for method: " + method);
+            result = tl::unexpected(McpClientError::timeout(
+                "Handler timeout after " + std::to_string(config_.handler_timeout.count()) + "ms"
+            ));
+        } else {
+            result = future.get();
+        }
+    } else {
+        // No timeout - run synchronously
+        result = run_handler();
     }
     
     // Send response

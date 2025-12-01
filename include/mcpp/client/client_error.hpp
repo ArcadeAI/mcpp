@@ -69,6 +69,10 @@ struct ClientError {
     [[nodiscard]] static ClientError timeout_error() {
         return {ClientErrorCode::Timeout, "Request timed out", std::nullopt};
     }
+    
+    [[nodiscard]] static ClientError timeout(std::string msg) {
+        return {ClientErrorCode::Timeout, std::move(msg), std::nullopt};
+    }
 
     [[nodiscard]] static ClientError cancelled() {
         return {ClientErrorCode::Cancelled, "Request was cancelled", std::nullopt};

@@ -54,12 +54,23 @@ struct JsonParseError {
 using JsonResult = tl::expected<nlohmann::json, JsonParseError>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Fast JSON Parser Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct FastJsonConfig {
+    // Maximum nesting depth to prevent stack overflow
+    // Default 64 matches most JSON parsers (Python's json module uses 1000)
+    std::size_t max_depth{64};
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fast JSON Parser Class
 // ─────────────────────────────────────────────────────────────────────────────
 
 class FastJsonParser {
 public:
     FastJsonParser() = default;
+    explicit FastJsonParser(FastJsonConfig config) : config_(config) {}
 
     // Parse JSON string to nlohmann::json
     // Thread-safe: each instance has its own parser state
@@ -68,14 +79,19 @@ public:
     // Parse with padding (more efficient for large documents)
     // The input must have SIMDJSON_PADDING bytes available after the content
     [[nodiscard]] JsonResult parse_padded(simdjson::padded_string_view json_str);
+    
+    // Get/set configuration
+    [[nodiscard]] const FastJsonConfig& config() const noexcept { return config_; }
+    void set_config(FastJsonConfig config) noexcept { config_ = config; }
 
 private:
     simdjson::ondemand::parser parser_;
+    FastJsonConfig config_;
 
-    // Convert simdjson value to nlohmann::json recursively
-    [[nodiscard]] nlohmann::json convert(simdjson::ondemand::value value);
-    [[nodiscard]] nlohmann::json convert_object(simdjson::ondemand::object obj);
-    [[nodiscard]] nlohmann::json convert_array(simdjson::ondemand::array arr);
+    // Convert simdjson value to nlohmann::json with depth tracking
+    [[nodiscard]] JsonResult convert(simdjson::ondemand::value value, std::size_t depth);
+    [[nodiscard]] JsonResult convert_object(simdjson::ondemand::object obj, std::size_t depth);
+    [[nodiscard]] JsonResult convert_array(simdjson::ondemand::array arr, std::size_t depth);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 #include "mcpp/log/logger.hpp"
 
+#include <atomic>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -125,12 +126,27 @@ void ConsoleLogger::log(const LogRecord& record) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Global Logger Singleton
 // ─────────────────────────────────────────────────────────────────────────────
+// Uses atomic pointer for lock-free reads, mutex only for writes.
+// This eliminates contention on the hot path (get_logger).
 
 namespace {
 
-// Default logger is NullLogger (zero overhead when not configured)
-std::unique_ptr<ILogger>& logger_instance() {
-    static std::unique_ptr<ILogger> instance = std::make_unique<NullLogger>();
+// Static NullLogger instance for default state
+NullLogger& default_null_logger() {
+    static NullLogger instance;
+    return instance;
+}
+
+// Atomic pointer for lock-free reads
+// Points to either default_null_logger or a user-provided logger
+std::atomic<ILogger*>& logger_ptr() {
+    static std::atomic<ILogger*> ptr{&default_null_logger()};
+    return ptr;
+}
+
+// Owned logger storage (protected by mutex)
+std::unique_ptr<ILogger>& owned_logger() {
+    static std::unique_ptr<ILogger> instance;
     return instance;
 }
 
@@ -142,18 +158,25 @@ std::mutex& logger_mutex() {
 }  // namespace
 
 ILogger& get_logger() noexcept {
-    std::lock_guard<std::mutex> lock(logger_mutex());
-    return *logger_instance();
+    // Lock-free read using atomic pointer
+    // acquire ordering ensures we see all writes to the logger object
+    ILogger* ptr = logger_ptr().load(std::memory_order_acquire);
+    return *ptr;
 }
 
 void set_logger(std::unique_ptr<ILogger> logger) noexcept {
     std::lock_guard<std::mutex> lock(logger_mutex());
-    const bool is_valid = (logger != nullptr);
-    if (is_valid) {
-        logger_instance() = std::move(logger);
+    
+    if (logger != nullptr) {
+        // Store the new logger and update atomic pointer
+        owned_logger() = std::move(logger);
+        // release ordering ensures the logger object is fully constructed
+        // before other threads can see the pointer
+        logger_ptr().store(owned_logger().get(), std::memory_order_release);
     } else {
-        // Reset to NullLogger if nullptr passed
-        logger_instance() = std::make_unique<NullLogger>();
+        // Reset to default NullLogger
+        owned_logger().reset();
+        logger_ptr().store(&default_null_logger(), std::memory_order_release);
     }
 }
 
