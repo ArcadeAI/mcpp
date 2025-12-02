@@ -7,7 +7,9 @@ namespace mcpp {
 // ─────────────────────────────────────────────────────────────────────────────
 
 JsonResult FastJsonParser::parse(std::string_view json_str) {
-    // simdjson requires padded input for safety
+    // NOTE: simdjson requires SIMDJSON_PADDING bytes after input for SIMD safety.
+    // This copy is unavoidable here. For zero-copy parsing, use parse_padded()
+    // with a pre-padded buffer from the transport layer.
     simdjson::padded_string padded(json_str);
     return parse_padded(padded);
 }
@@ -88,7 +90,9 @@ JsonResult FastJsonParser::convert(simdjson::ondemand::value value, std::size_t 
             auto str = value.get_string();
             const bool str_ok = (str.error() == simdjson::SUCCESS);
             if (str_ok) {
-                // Direct construction from string_view avoids intermediate copy
+                // NOTE: std::string copy is required - simdjson's string_view points
+                // into its internal buffer which becomes invalid after parsing.
+                // nlohmann SAX wouldn't help; we must own the string data.
                 return nlohmann::json(std::string(str.value()));
             }
             return tl::unexpected(JsonParseError(

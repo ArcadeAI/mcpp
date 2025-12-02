@@ -172,6 +172,8 @@ public:
 // ─────────────────────────────────────────────────────────────────────────────
 // ConsoleLogger - Outputs to stderr with colors
 // ─────────────────────────────────────────────────────────────────────────────
+// NOTE: Synchronous logging only. For async logging, ring buffers, or file
+// rotation, use SpdlogLogger (src/log/spdlog_logger.hpp) which wraps spdlog.
 
 class ConsoleLogger final : public ILogger {
 public:

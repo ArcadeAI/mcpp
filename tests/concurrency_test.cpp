@@ -322,3 +322,130 @@ TEST_CASE("CircuitBreaker can be used with shared_ptr", "[circuit-breaker][memor
     REQUIRE(stats.successful_requests == 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Handler Thread Queue Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Thread-safe queue pattern works correctly", "[concurrency][queue]") {
+    // Test the pattern used in McpClient handler thread
+    std::queue<int> task_queue;
+    std::mutex queue_mutex;
+    std::condition_variable queue_cv;
+    std::atomic<bool> running{true};
+    std::atomic<int> processed{0};
+    
+    // Consumer thread
+    auto consumer = std::thread([&]() {
+        while (running.load()) {
+            int task = 0;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                queue_cv.wait_for(lock, 10ms, [&]() {
+                    return !task_queue.empty() || !running.load();
+                });
+                
+                if (!running.load() && task_queue.empty()) {
+                    break;
+                }
+                
+                if (task_queue.empty()) {
+                    continue;
+                }
+                
+                task = task_queue.front();
+                task_queue.pop();
+            }
+            
+            // Process task (simulated work)
+            processed.fetch_add(task, std::memory_order_relaxed);
+        }
+    });
+    
+    // Producer: add tasks
+    constexpr int num_tasks = 100;
+    for (int i = 1; i <= num_tasks; ++i) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            task_queue.push(i);
+        }
+        queue_cv.notify_one();
+    }
+    
+    // Wait for processing
+    std::this_thread::sleep_for(100ms);
+    
+    // Stop consumer
+    running.store(false);
+    queue_cv.notify_all();
+    consumer.join();
+    
+    // Verify all tasks processed: sum of 1..100 = 5050
+    REQUIRE(processed.load() == 5050);
+}
+
+TEST_CASE("Multiple producers single consumer pattern", "[concurrency][queue]") {
+    std::queue<int> task_queue;
+    std::mutex queue_mutex;
+    std::condition_variable queue_cv;
+    std::atomic<bool> running{true};
+    std::atomic<int> processed{0};
+    
+    // Consumer thread
+    auto consumer = std::thread([&]() {
+        while (running.load()) {
+            int task = 0;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                queue_cv.wait_for(lock, 10ms, [&]() {
+                    return !task_queue.empty() || !running.load();
+                });
+                
+                if (!running.load() && task_queue.empty()) {
+                    break;
+                }
+                
+                if (task_queue.empty()) {
+                    continue;
+                }
+                
+                task = task_queue.front();
+                task_queue.pop();
+            }
+            processed.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    
+    // Multiple producer threads
+    constexpr int num_producers = 4;
+    constexpr int tasks_per_producer = 25;
+    std::vector<std::thread> producers;
+    
+    for (int p = 0; p < num_producers; ++p) {
+        producers.emplace_back([&, p]() {
+            for (int i = 0; i < tasks_per_producer; ++i) {
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    task_queue.push(p * 1000 + i);
+                }
+                queue_cv.notify_one();
+            }
+        });
+    }
+    
+    // Wait for producers
+    for (auto& t : producers) {
+        t.join();
+    }
+    
+    // Wait for processing
+    std::this_thread::sleep_for(100ms);
+    
+    // Stop consumer
+    running.store(false);
+    queue_cv.notify_all();
+    consumer.join();
+    
+    // All tasks should be processed
+    REQUIRE(processed.load() == num_producers * tasks_per_producer);
+}
+

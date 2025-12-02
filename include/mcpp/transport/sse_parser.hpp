@@ -55,6 +55,10 @@ struct SseParserConfig {
 /// SSE data may arrive in arbitrary chunks over the network. This parser
 /// buffers partial lines and emits complete events as they become available.
 ///
+/// NOTE: Timeouts for partial events (stalled connections) should be handled
+/// at the transport layer, not in the parser. The parser is stateless regarding
+/// time - it only processes data as it arrives.
+///
 /// Usage:
 ///   SseParser parser;
 ///   for (auto& chunk : incoming_data) {

@@ -11,10 +11,14 @@
 #include <tl/expected.hpp>
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 namespace mcpp {
@@ -300,6 +304,11 @@ private:
     void send_response(const Json& request_id, const McpResult<Json>& result);
     void dispatch_notification(const Json& message);
     uint64_t next_request_id();
+    
+    // Handler thread management
+    void start_handler_thread();
+    void stop_handler_thread();
+    void handler_thread_loop();
 
     // Configuration
     McpClientConfig config_;
@@ -333,6 +342,22 @@ private:
     
     // Circuit breaker for resilience
     std::unique_ptr<CircuitBreaker> circuit_breaker_;
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Handler Thread Pool (single worker thread for non-blocking handler execution)
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    struct HandlerTask {
+        std::string method;
+        Json params;
+        Json request_id;
+    };
+    
+    std::thread handler_thread_;
+    std::queue<HandlerTask> handler_queue_;
+    std::mutex handler_mutex_;
+    std::condition_variable handler_cv_;
+    std::atomic<bool> handler_running_{false};
 };
 
 }  // namespace mcpp

@@ -74,6 +74,9 @@ constexpr std::string_view BOLD    = "\033[1m";
 // ─────────────────────────────────────────────────────────────────────────────
 // ConsoleLogger Implementation
 // ─────────────────────────────────────────────────────────────────────────────
+// NOTE: ConsoleLogger writes synchronously to stderr. For high-throughput
+// scenarios requiring async logging, ring buffers, or file rotation,
+// use SpdlogLogger instead (see src/log/spdlog_logger.hpp).
 
 void ConsoleLogger::log(const LogRecord& record) {
     const bool should_log_this = should_log(record.level);

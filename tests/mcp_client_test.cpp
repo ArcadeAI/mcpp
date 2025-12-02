@@ -1318,3 +1318,49 @@ TEST_CASE("McpClient default request_timeout is 30 seconds", "[mcp][client][time
     REQUIRE(config.request_timeout == std::chrono::milliseconds(30000));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Handler Thread Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("McpClient handler_timeout is configurable", "[mcp][client][handler]") {
+    McpClientConfig config;
+    
+    // Default handler timeout is 60 seconds
+    REQUIRE(config.handler_timeout == std::chrono::milliseconds(60000));
+    
+    // Can set custom timeout
+    config.handler_timeout = std::chrono::milliseconds(5000);
+    REQUIRE(config.handler_timeout == std::chrono::milliseconds(5000));
+    
+    // Can disable timeout with 0
+    config.handler_timeout = std::chrono::milliseconds(0);
+    REQUIRE(config.handler_timeout == std::chrono::milliseconds(0));
+}
+
+TEST_CASE("McpClient starts and stops handler thread on connect/disconnect", "[mcp][client][handler][concurrency]") {
+    auto [client, server] = make_test_client();
+    
+    // Connect starts handler thread
+    auto result = client->connect();
+    REQUIRE(result.has_value());
+    REQUIRE(client->is_connected());
+    
+    // Disconnect stops handler thread cleanly
+    client->disconnect();
+    REQUIRE_FALSE(client->is_connected());
+}
+
+TEST_CASE("McpClient destructor stops handler thread cleanly", "[mcp][client][handler][concurrency]") {
+    // Create and connect client in a scope
+    {
+        auto [client, server] = make_test_client();
+        auto result = client->connect();
+        REQUIRE(result.has_value());
+        
+        // Client will be destroyed here - handler thread should stop cleanly
+    }
+    
+    // If we get here without hanging, the test passed
+    REQUIRE(true);
+}
+

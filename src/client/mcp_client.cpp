@@ -31,6 +31,7 @@ McpClient::McpClient(McpClientConfig config, std::unique_ptr<IHttpClient> http_c
 }
 
 McpClient::~McpClient() {
+    stop_handler_thread();
     disconnect();
 }
 
@@ -48,6 +49,9 @@ McpResult<InitializeResult> McpClient::connect() {
         return tl::unexpected(McpClientError::transport_error(start_result.error().message));
     }
     connected_ = true;
+    
+    // Start handler thread for non-blocking handler execution
+    start_handler_thread();
 
     if (config_.auto_initialize) {
         // Build initialize params
@@ -90,6 +94,9 @@ void McpClient::disconnect() {
         return;
     }
 
+    // Stop handler thread first
+    stop_handler_thread();
+    
     transport_->stop();
     connected_ = false;
     initialized_ = false;
@@ -726,47 +733,113 @@ void McpClient::handle_server_request(const Json& request) {
     Json params = request.value("params", Json::object());
     auto request_id = request["id"];
     
-    // Route to appropriate handler with timeout
-    McpResult<Json> result;
-    
-    // Lambda to run handler
-    auto run_handler = [this, &method, &params]() -> McpResult<Json> {
-        if (method == "elicitation/create") {
-            return handle_elicitation_request(params);
-        }
-        else if (method == "sampling/createMessage") {
-            return handle_sampling_request(params);
-        }
-        else if (method == "roots/list") {
-            return handle_roots_list_request();
-        }
-        else {
-            return tl::unexpected(McpClientError::protocol_error("Method not found: " + method));
-        }
-    };
-    
-    // Apply timeout if configured
-    const bool has_timeout = config_.handler_timeout.count() > 0;
-    if (has_timeout) {
-        // Run handler in async task with timeout
-        auto future = std::async(std::launch::async, run_handler);
-        auto status = future.wait_for(config_.handler_timeout);
-        
-        if (status == std::future_status::timeout) {
-            MCPP_LOG_WARN("Handler timeout for method: " + method);
-            result = tl::unexpected(McpClientError::timeout(
-                "Handler timeout after " + std::to_string(config_.handler_timeout.count()) + "ms"
-            ));
-        } else {
-            result = future.get();
-        }
-    } else {
-        // No timeout - run synchronously
-        result = run_handler();
+    // Queue the handler task for non-blocking execution
+    // This allows the receive loop to continue processing other messages
+    {
+        std::lock_guard<std::mutex> lock(handler_mutex_);
+        handler_queue_.push(HandlerTask{method, params, request_id});
+    }
+    handler_cv_.notify_one();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handler Thread Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+void McpClient::start_handler_thread() {
+    if (handler_running_.exchange(true)) {
+        return;  // Already running
     }
     
-    // Send response
-    send_response(request_id, result);
+    handler_thread_ = std::thread([this]() {
+        handler_thread_loop();
+    });
+}
+
+void McpClient::stop_handler_thread() {
+    if (!handler_running_.exchange(false)) {
+        return;  // Not running
+    }
+    
+    // Wake up the thread
+    handler_cv_.notify_all();
+    
+    // Wait for thread to finish
+    if (handler_thread_.joinable()) {
+        handler_thread_.join();
+    }
+    
+    // Clear any remaining tasks
+    {
+        std::lock_guard<std::mutex> lock(handler_mutex_);
+        std::queue<HandlerTask> empty;
+        std::swap(handler_queue_, empty);
+    }
+}
+
+void McpClient::handler_thread_loop() {
+    while (handler_running_.load()) {
+        HandlerTask task;
+        
+        // Wait for a task
+        {
+            std::unique_lock<std::mutex> lock(handler_mutex_);
+            handler_cv_.wait(lock, [this]() {
+                return !handler_queue_.empty() || !handler_running_.load();
+            });
+            
+            if (!handler_running_.load()) {
+                break;
+            }
+            
+            if (handler_queue_.empty()) {
+                continue;
+            }
+            
+            task = std::move(handler_queue_.front());
+            handler_queue_.pop();
+        }
+        
+        // Execute handler with timeout
+        McpResult<Json> result;
+        
+        auto run_handler = [this, &task]() -> McpResult<Json> {
+            if (task.method == "elicitation/create") {
+                return handle_elicitation_request(task.params);
+            }
+            else if (task.method == "sampling/createMessage") {
+                return handle_sampling_request(task.params);
+            }
+            else if (task.method == "roots/list") {
+                return handle_roots_list_request();
+            }
+            else {
+                return tl::unexpected(McpClientError::protocol_error("Method not found: " + task.method));
+            }
+        };
+        
+        const bool has_timeout = config_.handler_timeout.count() > 0;
+        if (has_timeout) {
+            // Run handler in async task with timeout
+            auto future = std::async(std::launch::async, run_handler);
+            auto status = future.wait_for(config_.handler_timeout);
+            
+            if (status == std::future_status::timeout) {
+                MCPP_LOG_WARN("Handler timeout for method: " + task.method);
+                result = tl::unexpected(McpClientError::timeout(
+                    "Handler timeout after " + std::to_string(config_.handler_timeout.count()) + "ms"
+                ));
+            } else {
+                result = future.get();
+            }
+        } else {
+            // No timeout - run directly
+            result = run_handler();
+        }
+        
+        // Send response (transport is thread-safe for sending)
+        send_response(task.request_id, result);
+    }
 }
 
 void McpClient::send_response(const Json& request_id, const McpResult<Json>& result) {

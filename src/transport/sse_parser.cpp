@@ -2,6 +2,8 @@
 
 #include <charconv>
 
+#include "mcpp/log/logger.hpp"
+
 namespace mcpp {
 
 // Compact buffer when consumed portion exceeds this threshold (4KB)
@@ -132,6 +134,7 @@ bool SseParser::process_line(std::string_view line) {
     }
     else if (field_name == "retry") {
         // Parse retry value (milliseconds) - per SSE spec, must be digits only
+        // NOTE: uint32_t limits to ~49 days max. Larger values are unusual in practice.
         std::uint32_t retry_ms = 0;
         auto [ptr, ec] = std::from_chars(
             field_value.data(), 
@@ -143,6 +146,10 @@ bool SseParser::process_line(std::string_view line) {
             current_retry_ = retry_ms;
         }
         // Invalid retry values are silently ignored per spec
+    }
+    else {
+        // Unknown field - log at debug level for future SSE extensions
+        MCPP_LOG_DEBUG("SSE: ignoring unknown field '" + std::string(field_name) + "'");
     }
 
     return false;  // Event not complete yet
